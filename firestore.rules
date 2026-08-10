@@ -1,0 +1,373 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    //////////////////////////////////////////////////////////////////////////////
+    // HELPERS
+    //////////////////////////////////////////////////////////////////////////////
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return userExists() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data : {};
+    }
+
+    function role() {
+      return getUserData().get('role', '').lower().trim();
+    }
+
+    function isApproved() {
+      return isSignedIn()
+          && (
+            getUserData().get('approvalStatus', '').lower() == "approved"
+            || getUserData().get('isVerified', false) == true
+            || role() == "owner"
+            || role() == "super_admin"
+          )
+          && getUserData().get('accountStatus', 'active').lower() != "rejected";
+    }
+
+    function isOwner() {
+      return isApproved() && (role() == "owner" || role() == "super_admin");
+    }
+
+    function isManager() {
+      return isApproved() && role() == "manager";
+    }
+
+    function isAdmin() {
+      return isOwner() || isManager();
+    }
+
+    function isTeacher() {
+      return isApproved() && role() == "teacher";
+    }
+
+    function isStudent() {
+      return isApproved() && role() == "student";
+    }
+
+    function isParent() {
+      return isApproved() && role() == "parent";
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // USERS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow update: if isAdmin() || (
+        request.auth.uid == userId && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "name", "photoUrl", "phone", "bio", "deviceToken", "lastSeen"
+          ]) || (
+            role() == "teacher" &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "total_lectures_taken", "unpaid_lectures"
+            ])
+          )
+        )
+      ) || (
+        isStudent()
+        && resource.data.get('role', '').lower() == "parent"
+        && resource.data.get('linkedStudentId', '') == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "approvalStatus", "accountStatus", "approvedBy", "approvedByRole", "approvedAt", "rejectionReason", "isVerified"
+        ])
+      );
+
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // APPROVAL LOGS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /approval_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() || isStudent();
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // CLASSES
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /classes/{classId} {
+      allow read: if isApproved() && (
+        isAdmin() ||
+        (isTeacher() && (
+          classId in getUserData().get('assignedClasses', []) ||
+          request.auth.uid in resource.data.get('teacherIds', []) ||
+          resource.data.get('teacherId', '') == request.auth.uid
+        )) ||
+        (isStudent() && getUserData().get('classId', '') == classId) ||
+        (isParent() && (
+          getUserData().get('classId', '') == classId ||
+          (
+            getUserData().get('linkedStudentId', '') != '' &&
+            exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+            get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '') == classId
+          )
+        ))
+      );
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && role() == "student"
+        && resource.data.isActive == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount"])
+        && request.resource.data.memberCount == resource.data.memberCount + 1
+      );
+      allow delete: if isOwner();
+
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && (request.auth.uid == memberId || isAdmin());
+        allow update, delete: if isAdmin();
+      }
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update: if request.auth.uid == resource.data.senderId;
+        allow delete: if request.auth.uid == resource.data.senderId || isAdmin();
+      }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // LECTURES
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /lectures/{lectureId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (
+        isTeacher()
+        && resource.data.teacherId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status", "cancellationReason", "cancelledBy", "cancellationRequestedAt", "updatedAt"
+        ])
+        && request.resource.data.status == "cancel_pending"
+      );
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // STUDENT ATTENDANCE
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /student_attendance/{attendanceId} {
+      allow read: if isAdmin();
+      allow read: if isTeacher() && resource.data.teacherId == request.auth.uid;
+      allow read: if isStudent() && resource.data.studentId == request.auth.uid;
+      allow read: if isParent() && resource.data.studentId == getUserData().get('linkedStudentId', '');
+
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == request.auth.uid);
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // TEACHER ATTENDANCE
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /teacher_attendance/{attendanceId} {
+      allow read: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == request.auth.uid);
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // TESTS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /tests/{testId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // RESULTS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /results/{resultId} {
+      allow read: if isAdmin();
+      allow read: if isTeacher() && resource.data.teacherId == request.auth.uid;
+      allow read: if isStudent() && resource.data.studentId == request.auth.uid;
+      allow read: if isParent() && resource.data.studentId == getUserData().get('linkedStudentId', '');
+
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // STUDY MATERIALS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /study_materials/{materialId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || (
+        isTeacher()
+        && resource.data.teacherId == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "teacherId", "teacherName", "createdBy", "createdAt"
+        ])
+      );
+      allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // FEES & STUDENT FEES
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /fees/{feeId} {
+      allow read: if isAdmin()
+          || (isStudent() && resource.data.studentId == request.auth.uid)
+          || (isParent() && resource.data.studentId == getUserData().get('linkedStudentId', ''));
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    match /student_fees/{feeId} {
+      allow read: if isAdmin()
+          || (isStudent() && resource.data.studentId == request.auth.uid)
+          || (isParent() && resource.data.studentId == getUserData().get('linkedStudentId', ''));
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // FINANCIAL TRANSACTIONS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /financial_transactions/{transactionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.partyId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // PAYROLL & PAYOUTS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /payroll/{teacherId} {
+      allow read: if isAdmin() || (isTeacher() && teacherId == request.auth.uid);
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    match /payouts/{payoutId} {
+      allow read: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // CONVERSATIONS & MESSAGES
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      allow update: if isSignedIn()
+          && request.auth.uid in resource.data.participants
+          && request.resource.data.participants == resource.data.participants;
+      allow delete: if isOwner();
+
+      match /messages/{messageId} {
+        allow read, create: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow update, delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
+      }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // CHATS (LEGACY & GROUP CHAT HUB)
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /chats/{chatId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read, create: if isSignedIn();
+        allow update, delete: if isSignedIn() && resource.data.sender_id == request.auth.uid;
+      }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // NOTIFICATIONS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (
+        resource.data.receiverId == request.auth.uid ||
+        resource.data.userId == request.auth.uid ||
+        resource.data.to_user == request.auth.uid
+      );
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isSignedIn() && (
+        resource.data.receiverId == request.auth.uid ||
+        resource.data.userId == request.auth.uid ||
+        resource.data.to_user == request.auth.uid
+      );
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // AUDIT LOGS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // DIRECTORY
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /directory/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if request.auth.uid == userId || isAdmin();
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // SETTINGS
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // DEFAULT DENY
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
