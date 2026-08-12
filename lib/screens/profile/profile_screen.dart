@@ -54,7 +54,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'contact_number': _phoneController.text.trim(),
         'phone': _phoneController.text.trim(), // Support both fields
         'address': _addressController.text.trim(),
-        'email': user!.email,
+        'updatedAt': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 

@@ -418,6 +418,8 @@ class ClassService {
 
   /// Convenience: add a teacher to multiple class teacherIds at once.
   /// Used during initial registration where the teacher has no prior classes.
+  /// Convenience: add a teacher to multiple class teacherIds at once.
+  /// Used during initial registration where the teacher has no prior classes.
   Future<void> addTeacherToClasses({
     required String teacherUid,
     required List<String> classIds,
@@ -427,4 +429,116 @@ class ClassService {
         removedClassIds: const [],
         addedClassIds: classIds,
       );
+
+  /// Unified stream of authorized active [CourseClass] documents for any role.
+  /// - Admin / Owner / Manager: Streams all active classes.
+  /// - Teacher: Resolves assignedClasses array from user profile via document query/snapshots.
+  /// - Student: Resolves single classId from user profile.
+  /// - Parent: Resolves linked student's classId.
+  Stream<List<CourseClass>> streamClassesForUser({
+    required String uid,
+    required String role,
+  }) {
+    final cleanRole = role.toLowerCase().trim();
+
+    if (cleanRole == 'owner' ||
+        cleanRole == 'manager' ||
+        cleanRole == 'super_admin' ||
+        cleanRole == 'admin') {
+      return activeClasses();
+    }
+
+    if (uid.isEmpty) return Stream.value([]);
+
+    return _db.collection('users').doc(uid).snapshots().asyncExpand((userSnap) async* {
+      if (!userSnap.exists) {
+        yield <CourseClass>[];
+        return;
+      }
+
+      final userData = userSnap.data() ?? {};
+
+      if (cleanRole == 'teacher') {
+        List<String> assignedClasses = [];
+        if (userData['assignedClasses'] is List) {
+          assignedClasses = List<String>.from(
+            (userData['assignedClasses'] as List).map((e) => e.toString()),
+          );
+        }
+
+        if (assignedClasses.isNotEmpty) {
+          yield* _streamClassesByIds(assignedClasses);
+        } else {
+          // Fallback: Check teacherIds array
+          yield* _db
+              .collection('classes')
+              .where('teacherIds', arrayContains: uid)
+              .snapshots()
+              .map(
+                (snap) => snap.docs
+                    .map((d) => CourseClass.fromSnapshot(d))
+                    .where((c) => c.isActive)
+                    .toList(),
+              );
+        }
+      } else if (cleanRole == 'student') {
+        final classId = userData['classId'] as String?;
+        if (classId != null && classId.trim().isNotEmpty) {
+          yield* _streamClassesByIds([classId.trim()]);
+        } else {
+          yield <CourseClass>[];
+        }
+      } else if (cleanRole == 'parent') {
+        final linkedStudentId = userData['linkedStudentId'] as String?;
+        final ownClassId = userData['classId'] as String?;
+
+        if (linkedStudentId != null && linkedStudentId.trim().isNotEmpty) {
+          final studentDoc = await _db.collection('users').doc(linkedStudentId).get();
+          final studentClassId = studentDoc.data()?['classId'] as String?;
+          if (studentClassId != null && studentClassId.trim().isNotEmpty) {
+            yield* _streamClassesByIds([studentClassId.trim()]);
+          } else {
+            yield <CourseClass>[];
+          }
+        } else if (ownClassId != null && ownClassId.trim().isNotEmpty) {
+          yield* _streamClassesByIds([ownClassId.trim()]);
+        } else {
+          yield <CourseClass>[];
+        }
+      } else {
+        yield <CourseClass>[];
+      }
+    });
+  }
+
+  Stream<List<CourseClass>> _streamClassesByIds(List<String> classIds) {
+    if (classIds.isEmpty) return Stream.value([]);
+
+    if (classIds.length == 1) {
+      return _db
+          .collection('classes')
+          .doc(classIds.first)
+          .snapshots()
+          .map((docSnap) {
+            if (!docSnap.exists) return <CourseClass>[];
+            final courseClass = CourseClass.fromSnapshot(docSnap);
+            return courseClass.isActive ? [courseClass] : <CourseClass>[];
+          });
+    }
+
+    if (classIds.length <= 30) {
+      return _db
+          .collection('classes')
+          .where(FieldPath.documentId, whereIn: classIds)
+          .snapshots()
+          .map(
+            (snap) => snap.docs
+                .map((d) => CourseClass.fromSnapshot(d))
+                .where((c) => c.isActive)
+                .toList(),
+          );
+    }
+
+    return Stream.value([]);
+  }
 }

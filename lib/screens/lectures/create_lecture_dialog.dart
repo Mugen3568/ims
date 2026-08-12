@@ -265,28 +265,39 @@ class _CreateLectureDialogState extends State<CreateLectureDialog> {
                         .doc(FirebaseAuth.instance.currentUser?.uid)
                         .snapshots(),
                     builder: (context, userSnap) {
-                      List<String> assignedClassIds = [];
                       String role = 'staff';
                       if (userSnap.hasData && userSnap.data!.exists) {
                         final userData = userSnap.data!.data() as Map<String, dynamic>? ?? {};
                         role = (userData['role'] ?? 'staff').toString().toLowerCase();
-                        if (userData['assignedClasses'] is List) {
-                          assignedClassIds = List<String>.from(
-                            (userData['assignedClasses'] as List).map((e) => e.toString()),
-                          );
-                        }
                       }
-                      final teacherUid = FirebaseAuth.instance.currentUser?.uid;
+                      final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
                       return StreamBuilder<List<CourseClass>>(
-                        stream: _classService.allCourseClasses(),
+                        stream: _classService.streamClassesForUser(
+                          uid: currentUid,
+                          role: role,
+                        ),
                         builder: (context, snapshot) {
-                          var classes = snapshot.data ?? [];
-                          if (role == 'teacher' && teacherUid != null) {
-                            classes = classes.where((c) {
-                              return assignedClassIds.contains(c.id) ||
-                                  c.teacherIds.contains(teacherUid);
-                            }).toList();
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const InputDecorator(
+                              decoration: InputDecoration(
+                                labelText: 'Select Class *',
+                                prefixIcon: Icon(Icons.class_rounded),
+                              ),
+                              child: Text('Loading classes...', style: TextStyle(color: Colors.grey)),
+                            );
+                          }
+
+                          final classes = snapshot.data ?? [];
+
+                          if (classes.isEmpty) {
+                            return const InputDecorator(
+                              decoration: InputDecoration(
+                                labelText: 'Select Class *',
+                                prefixIcon: Icon(Icons.class_rounded),
+                              ),
+                              child: Text('No classes assigned', style: TextStyle(color: Colors.grey)),
+                            );
                           }
 
                           return DropdownButtonFormField<CourseClass>(

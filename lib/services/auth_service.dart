@@ -45,56 +45,17 @@ class AuthService extends ChangeNotifier {
       String? resolvedClassId = classId;
       String? linkedStudentId;
 
-      // ── Student Invite Code Validation ──────────────────────────────────────
-      if (role == 'student') {
-        if (inviteCode != null && inviteCode.isNotEmpty) {
-          final courseClass = await ClassService(
-            firestore: _db,
-          ).findByInviteCode(inviteCode);
-          if (courseClass == null) {
-            return 'Invalid or inactive class invite code. Please check with your administrator.';
-          }
-          resolvedClassId = courseClass.id;
-        } else if (resolvedClassId == null || resolvedClassId.isEmpty) {
+      // ── Initial Parameter Checks ───────────────────────────────────────────
+      if (role == 'student' && (resolvedClassId == null || resolvedClassId.isEmpty)) {
+        if (inviteCode == null || inviteCode.isEmpty) {
           return 'Please enter a valid class invite code.';
         }
       }
 
-      // ── Parent Student Linking Validation ──────────────────────────────────
-      if (role == 'parent') {
-        if (childEmail == null || childEmail.isEmpty) {
-          return "Please enter your child's registered email address or Student ID.";
-        }
-
-        // Query by email
-        var childQuery = await _db
-            .collection('users')
-            .where('email', isEqualTo: childEmail)
-            .where('role', isEqualTo: 'student')
-            .limit(1)
-            .get();
-
-        DocumentSnapshot? childDoc;
-        if (childQuery.docs.isNotEmpty) {
-          childDoc = childQuery.docs.first;
-        } else {
-          // Check by Document ID (Student ID)
-          var docById = await _db.collection('users').doc(childEmail).get();
-          if (docById.exists && docById.data()?['role'] == 'student') {
-            childDoc = docById;
-          }
-        }
-
-        if (childDoc == null) {
-          return 'Child not found. Please verify the child email address or Student ID.';
-        }
-
-        final childData = childDoc.data() as Map<String, dynamic>? ?? {};
-        linkedStudentId = childDoc.id;
-        resolvedClassId = childData['classId'] as String?;
+      if (role == 'parent' && (childEmail == null || childEmail.isEmpty)) {
+        return "Please enter your child's registered email address or Student ID.";
       }
 
-      // ── Teacher Validation ──────────────────────────────────────────────────
       if (role == 'teacher' &&
           isCreatedByAdmin &&
           (assignedClasses == null || assignedClasses.isEmpty)) {
@@ -118,6 +79,56 @@ class AuthService extends ChangeNotifier {
       User? user = result.user;
 
       if (user != null) {
+        // ── Post-Authentication Student & Parent Validation ───────────────────
+        try {
+          if (role == 'student' && (resolvedClassId == null || resolvedClassId.isEmpty)) {
+            if (inviteCode != null && inviteCode.isNotEmpty) {
+              final courseClass = await ClassService(
+                firestore: _db,
+              ).findByInviteCode(inviteCode);
+              if (courseClass == null) {
+                await user.delete();
+                return 'Invalid or inactive class invite code. Please check with your administrator.';
+              }
+              resolvedClassId = courseClass.id;
+            }
+          }
+
+          if (role == 'parent') {
+            var childQuery = await _db
+                .collection('users')
+                .where('email', isEqualTo: childEmail)
+                .where('role', isEqualTo: 'student')
+                .limit(1)
+                .get();
+
+            DocumentSnapshot? childDoc;
+            if (childQuery.docs.isNotEmpty) {
+              childDoc = childQuery.docs.first;
+            } else if (childEmail != null) {
+              var docById = await _db.collection('users').doc(childEmail).get();
+              if (docById.exists && docById.data()?['role'] == 'student') {
+                childDoc = docById;
+              }
+            }
+
+            if (childDoc == null) {
+              await user.delete();
+              return 'Child not found. Please verify the child email address or Student ID.';
+            }
+
+            final childData = childDoc.data() as Map<String, dynamic>? ?? {};
+            linkedStudentId = childDoc.id;
+            resolvedClassId = childData['classId'] as String?;
+          }
+        } catch (validationError) {
+          debugPrint('Validation failed post-auth, rolling back: $validationError');
+          try {
+            await user.delete();
+          } catch (_) {}
+          return 'Registration failed during account setup: $validationError';
+        }
+
         // ── Transaction-Protected First Owner Bootstrap ──────────────────────
         bool isBootstrapOwner = false;
         if (role == 'owner') {

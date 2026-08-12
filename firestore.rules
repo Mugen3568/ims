@@ -68,7 +68,7 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         request.auth.uid == userId && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "name", "photoUrl", "phone", "bio", "deviceToken", "lastSeen"
+            "name", "photoUrl", "phone", "contact_number", "address", "bio", "deviceToken", "lastSeen", "updatedAt", "updated_at", "childEmail", "isProfileComplete", "is_profile_complete"
           ]) || (
             role() == "teacher" &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -104,7 +104,8 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /classes/{classId} {
-      allow read: if isApproved() && (
+      allow read: if isSignedIn() && (
+        resource.data.get('isActive', true) == true ||
         isAdmin() ||
         (isTeacher() && (
           classId in getUserData().get('assignedClasses', []) ||
@@ -152,14 +153,31 @@ service cloud.firestore {
     match /lectures/{lectureId} {
       allow read: if isSignedIn();
       allow create: if isAdmin();
-      allow update: if isAdmin() || (
-        isTeacher()
-        && resource.data.teacherId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "status", "cancellationReason", "cancelledBy", "cancellationRequestedAt", "updatedAt"
-        ])
-        && request.resource.data.status == "cancel_pending"
-      );
+      allow update: if isAdmin()
+        || (
+          isTeacher()
+          && resource.data.teacherId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "attendanceSubmitted",
+            "attendanceSubmittedAt",
+            "attendanceSummary",
+            "attendanceVersion",
+            "updatedAt"
+          ])
+          && request.resource.data.attendanceSubmitted == true
+        )
+        || (
+          isTeacher()
+          && resource.data.teacherId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "status",
+            "cancellationReason",
+            "cancelledBy",
+            "cancellationRequestedAt",
+            "updatedAt"
+          ])
+          && request.resource.data.status == "cancel_pending"
+        );
       allow delete: if isOwner();
     }
 
@@ -253,7 +271,7 @@ service cloud.firestore {
     }
 
     //////////////////////////////////////////////////////////////////////////////
-    // FINANCIAL TRANSACTIONS
+    // FINANCIAL TRANSACTIONS & PAYMENTS
     //////////////////////////////////////////////////////////////////////////////
 
     match /financial_transactions/{transactionId} {
@@ -263,13 +281,32 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
+    match /payments/{paymentId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
     //////////////////////////////////////////////////////////////////////////////
     // PAYROLL & PAYOUTS
     //////////////////////////////////////////////////////////////////////////////
 
     match /payroll/{teacherId} {
       allow read: if isAdmin() || (isTeacher() && teacherId == request.auth.uid);
-      allow create, update: if isAdmin();
+      allow create: if isAdmin() || (isTeacher() && teacherId == request.auth.uid && request.resource.data.teacherId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isTeacher()
+        && teacherId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "teacherId",
+          "perLecture",
+          "completedLectures",
+          "unpaidLectures",
+          "pendingSalary",
+          "lastPaidAt",
+          "updatedAt"
+        ])
+      );
       allow delete: if isOwner();
     }
 
@@ -294,12 +331,13 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read, create: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
-        allow update, delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
+        allow update: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
       }
     }
 
     //////////////////////////////////////////////////////////////////////////////
-    // CHATS (LEGACY & GROUP CHAT HUB)
+    // CHATS & GROUPS
     //////////////////////////////////////////////////////////////////////////////
 
     match /chats/{chatId} {
@@ -312,8 +350,18 @@ service cloud.firestore {
       }
     }
 
+    match /groups/{groupId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read, create, update: if isSignedIn();
+        allow delete: if isAdmin() || (isSignedIn() && resource.data.sender_id == request.auth.uid);
+      }
+    }
+
     //////////////////////////////////////////////////////////////////////////////
-    // NOTIFICATIONS
+    // NOTIFICATIONS, AUDIT LOGS, INSTITUTES, NOTES, ALERTS
     //////////////////////////////////////////////////////////////////////////////
 
     match /notifications/{notificationId} {
@@ -331,10 +379,6 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
-    //////////////////////////////////////////////////////////////////////////////
-    // AUDIT LOGS
-    //////////////////////////////////////////////////////////////////////////////
-
     match /audit_logs/{logId} {
       allow read: if isAdmin();
       allow create: if isAdmin() || isTeacher();
@@ -342,8 +386,22 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
+    match /institutes/{instituteId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isOwner();
+    }
+
+    match /notes/{noteId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin() || isTeacher();
+    }
+
+    match /alerts/{alertId} {
+      allow read, write: if isAdmin();
+    }
+
     //////////////////////////////////////////////////////////////////////////////
-    // DIRECTORY
+    // DIRECTORY & SETTINGS
     //////////////////////////////////////////////////////////////////////////////
 
     match /directory/{userId} {
@@ -351,10 +409,6 @@ service cloud.firestore {
       allow create, update: if request.auth.uid == userId || isAdmin();
       allow delete: if isOwner();
     }
-
-    //////////////////////////////////////////////////////////////////////////////
-    // SETTINGS
-    //////////////////////////////////////////////////////////////////////////////
 
     match /settings/{docId} {
       allow read: if isSignedIn();

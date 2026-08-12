@@ -140,34 +140,12 @@ class TeacherDashboard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              StreamBuilder<DocumentSnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(user?.uid)
-                    .snapshots(),
-                builder: (context, userSnap) {
-                  if (userSnap.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(20.0),
-                        child: CircularProgressIndicator(),
-                      ),
-                    );
-                  }
-
-                  List<String> assignedClassIds = [];
-                  if (userSnap.hasData && userSnap.data!.exists) {
-                    final userData = userSnap.data!.data() as Map<String, dynamic>? ?? {};
-                    if (userData['assignedClasses'] is List) {
-                      assignedClassIds = List<String>.from(
-                        (userData['assignedClasses'] as List).map((e) => e.toString()),
-                      );
-                    }
-                  }
-
-                  return StreamBuilder<List<CourseClass>>(
-                    stream: ClassService().allCourseClasses(),
-                    builder: (context, classSnap) {
+              StreamBuilder<List<CourseClass>>(
+                stream: ClassService().streamClassesForUser(
+                  uid: user?.uid ?? '',
+                  role: 'teacher',
+                ),
+                builder: (context, classSnap) {
                       if (classSnap.connectionState == ConnectionState.waiting) {
                         return const Center(
                           child: Padding(
@@ -177,11 +155,7 @@ class TeacherDashboard extends StatelessWidget {
                         );
                       }
 
-                      final allCourseClasses = classSnap.data ?? [];
-                      final assigned = allCourseClasses.where((c) {
-                        return assignedClassIds.contains(c.id) ||
-                            (user?.uid != null && c.teacherIds.contains(user!.uid));
-                      }).toList();
+                      final assigned = classSnap.data ?? [];
 
                       if (assigned.isEmpty) {
                         return _buildEmptyStateCard(
@@ -258,10 +232,8 @@ class TeacherDashboard extends StatelessWidget {
                         }).toList(),
                       );
                     },
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
+                  ),
+                  const SizedBox(height: 24),
 
               // --- TODAY'S LECTURES ---
               Row(

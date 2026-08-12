@@ -214,33 +214,39 @@ class _CreateTestDialogState extends State<CreateTestDialog> {
                   .doc(FirebaseAuth.instance.currentUser?.uid)
                   .snapshots(),
               builder: (context, userSnap) {
-                List<String> assignedClassIds = [];
                 String effectiveRole = widget.userRole;
-                String? studentClassId;
                 if (userSnap.hasData && userSnap.data!.exists) {
                   final userData = userSnap.data!.data() as Map<String, dynamic>? ?? {};
                   effectiveRole = (userData['role'] ?? widget.userRole).toString().toLowerCase();
-                  studentClassId = userData['classId'] as String?;
-                  if (userData['assignedClasses'] is List) {
-                    assignedClassIds = List<String>.from(
-                      (userData['assignedClasses'] as List).map((e) => e.toString()),
-                    );
-                  }
                 }
-                final teacherUid = FirebaseAuth.instance.currentUser?.uid;
+                final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
                 return StreamBuilder<List<CourseClass>>(
-                  stream: ClassService().allCourseClasses(),
+                  stream: ClassService().streamClassesForUser(
+                    uid: currentUid,
+                    role: effectiveRole,
+                  ),
                   builder: (context, snapshot) {
-                    var classes = snapshot.data ?? [];
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'Class (Optional)',
+                          border: OutlineInputBorder(),
+                        ),
+                        child: Text('Loading classes...', style: TextStyle(color: Colors.grey)),
+                      );
+                    }
 
-                    if (effectiveRole == 'teacher' && teacherUid != null) {
-                      classes = classes.where((c) {
-                        return assignedClassIds.contains(c.id) ||
-                            c.teacherIds.contains(teacherUid);
-                      }).toList();
-                    } else if (effectiveRole == 'student') {
-                      classes = classes.where((c) => c.id == studentClassId).toList();
+                    final classes = snapshot.data ?? [];
+
+                    if (classes.isEmpty) {
+                      return const InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'Class (Optional)',
+                          border: OutlineInputBorder(),
+                        ),
+                        child: Text('No classes assigned', style: TextStyle(color: Colors.grey)),
+                      );
                     }
 
                     return DropdownButtonFormField<String>(

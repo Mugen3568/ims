@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -341,58 +342,10 @@ class _ClassesHomeState extends State<_ClassesHome> {
               );
             }
 
-            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: _service.classes(),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Unable to load classes: ${snapshot.error}'),
-                  );
-                }
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final classes = snapshot.data!.docs
-                    .map(SchoolClass.fromSnapshot)
-                    .where((schoolClass) => schoolClass.isActive)
-                    .toList();
-
-                final teacherClasses = classes.where((c) {
-                  return assignedClasses.contains(c.id) ||
-                      c.teacherIds.contains(userId) ||
-                      c.teacherId == userId;
-                }).toList();
-
-                if (teacherClasses.isEmpty) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(40),
-                      child: Text(
-                        'No classes assigned.',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                return ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: teacherClasses
-                      .map(
-                        (schoolClass) => _ClassCard(
-                          schoolClass: schoolClass,
-                          userId: userId,
-                          role: role,
-                        ),
-                      )
-                      .toList(),
-                );
-              },
+            return _TeacherClassesView(
+              assignedClassIds: assignedClasses,
+              userId: userId,
+              role: role,
             );
           }
 
@@ -766,6 +719,255 @@ class _ClassWorkspaceScreenState extends State<ClassWorkspaceScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TeacherClassesView extends StatelessWidget {
+  const _TeacherClassesView({
+    required this.assignedClassIds,
+    required this.userId,
+    required this.role,
+  });
+
+  final List<String> assignedClassIds;
+  final String? userId;
+  final String role;
+
+  @override
+  Widget build(BuildContext context) {
+    if (assignedClassIds.isNotEmpty) {
+      return _TeacherAssignedClassesList(
+        classIds: assignedClassIds,
+        userId: userId,
+        role: role,
+      );
+    }
+
+    if (userId != null && userId!.isNotEmpty) {
+      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('classes')
+            .where('teacherIds', arrayContains: userId)
+            .snapshots(),
+        builder: (context, fallbackSnap) {
+          if (fallbackSnap.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(40),
+                child: Text(
+                  'No classes assigned.',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            );
+          }
+          if (!fallbackSnap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final fallbackClasses = fallbackSnap.data!.docs
+              .map(SchoolClass.fromSnapshot)
+              .where((c) => c.isActive)
+              .toList();
+
+          if (fallbackClasses.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(40),
+                child: Text(
+                  'No classes assigned.',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            );
+          }
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: fallbackClasses
+                .map(
+                  (schoolClass) => _ClassCard(
+                    schoolClass: schoolClass,
+                    userId: userId,
+                    role: role,
+                  ),
+                )
+                .toList(),
+          );
+        },
+      );
+    }
+
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(40),
+        child: Text(
+          'No classes assigned.',
+          style: TextStyle(
+            fontSize: 16,
+            color: Colors.grey,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TeacherAssignedClassesList extends StatefulWidget {
+  const _TeacherAssignedClassesList({
+    required this.classIds,
+    required this.userId,
+    required this.role,
+  });
+
+  final List<String> classIds;
+  final String? userId;
+  final String role;
+
+  @override
+  State<_TeacherAssignedClassesList> createState() =>
+      _TeacherAssignedClassesListState();
+}
+
+class _TeacherAssignedClassesListState
+    extends State<_TeacherAssignedClassesList> {
+  final Map<String, SchoolClass?> _loadedClasses = {};
+  final List<StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
+      _subscriptions = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToClasses();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TeacherAssignedClassesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_listEquals(oldWidget.classIds, widget.classIds)) {
+      _unsubscribe();
+      _subscribeToClasses();
+    }
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  void _unsubscribe() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+  }
+
+  void _subscribeToClasses() {
+    _unsubscribe();
+    _loadedClasses.clear();
+    if (widget.classIds.isEmpty) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    _loading = true;
+    int loadedCount = 0;
+    for (final classId in widget.classIds) {
+      final sub = FirebaseFirestore.instance
+          .collection('classes')
+          .doc(classId)
+          .snapshots()
+          .listen(
+        (docSnap) {
+          if (docSnap.exists) {
+            _loadedClasses[classId] = SchoolClass.fromSnapshot(docSnap);
+          } else {
+            _loadedClasses.remove(classId);
+          }
+          loadedCount++;
+          if (mounted) {
+            setState(() {
+              if (loadedCount >= widget.classIds.length) {
+                _loading = false;
+              }
+            });
+          }
+        },
+        onError: (e) {
+          debugPrint('Error loading class $classId: $e');
+          loadedCount++;
+          if (mounted) {
+            setState(() {
+              if (loadedCount >= widget.classIds.length) {
+                _loading = false;
+              }
+            });
+          }
+        },
+      );
+      _subscriptions.add(sub);
+    }
+  }
+
+  @override
+  void dispose() {
+    _unsubscribe();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading && _loadedClasses.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final activeClasses = widget.classIds
+        .map((id) => _loadedClasses[id])
+        .whereType<SchoolClass>()
+        .where((c) => c.isActive)
+        .toList();
+
+    if (activeClasses.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(40),
+          child: Text(
+            'No classes assigned.',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: activeClasses
+          .map(
+            (schoolClass) => _ClassCard(
+              schoolClass: schoolClass,
+              userId: widget.userId,
+              role: widget.role,
+            ),
+          )
+          .toList(),
     );
   }
 }

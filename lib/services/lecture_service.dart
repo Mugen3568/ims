@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import '../models/lecture_model.dart';
 import 'audit_service.dart';
@@ -329,31 +330,35 @@ class LectureService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    await AuditService(firestore: _db).log(
-      userId: ownerUid,
-      action: 'Approved cancellation for lecture ${lecture.lectureCode}',
-      module: 'Lecture',
-      entityId: lectureId,
-    );
+    try {
+      await AuditService(firestore: _db).log(
+        userId: ownerUid,
+        action: 'Approved cancellation for lecture ${lecture.lectureCode}',
+        module: 'Lecture',
+        entityId: lectureId,
+      );
 
-    // Notify assigned teacher
-    await _notifyUsers(
-      [lecture.teacherId],
-      'Cancellation Approved',
-      'Your cancellation request for ${lecture.subject} (${lecture.className}) was approved.',
-      lectureId,
-    );
+      // Notify assigned teacher
+      await _notifyUsers(
+        [lecture.teacherId],
+        'Cancellation Approved',
+        'Your cancellation request for ${lecture.subject} (${lecture.className}) was approved.',
+        lectureId,
+      );
 
-    // Notify class students
-    final dateStr = DateFormat('dd MMM').format(lecture.startDateTime);
-    final timeStr = _formatTime(lecture.startDateTime);
-    await NotificationService(firestore: _db).sendLectureNotificationToClass(
-      classId: lecture.classId,
-      lectureId: lectureId,
-      title: 'Lecture Cancelled',
-      body: '${lecture.subject} on $dateStr at $timeStr has been cancelled',
-      type: 'lecture_cancelled',
-    );
+      // Notify class students
+      final dateStr = DateFormat('dd MMM').format(lecture.startDateTime);
+      final timeStr = _formatTime(lecture.startDateTime);
+      await NotificationService(firestore: _db).sendLectureNotificationToClass(
+        classId: lecture.classId,
+        lectureId: lectureId,
+        title: 'Lecture Cancelled',
+        body: '${lecture.subject} on $dateStr at $timeStr has been cancelled',
+        type: 'lecture_cancelled',
+      );
+    } catch (e) {
+      debugPrint('Secondary notifications failed during cancellation approval: $e');
+    }
   }
 
   /// Owner / Manager rejects cancellation request
