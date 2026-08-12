@@ -95,31 +95,45 @@ class AuthService extends ChangeNotifier {
           }
 
           if (role == 'parent') {
-            var childQuery = await _db
-                .collection('users')
-                .where('email', isEqualTo: childEmail)
-                .where('role', isEqualTo: 'student')
-                .limit(1)
-                .get();
+            final cleanChildEmail = (childEmail ?? '').trim().toLowerCase();
+            if (cleanChildEmail.isNotEmpty) {
+              // 1. Direct get on student_lookup collection
+              try {
+                final lookupDoc =
+                    await _db.collection('student_lookup').doc(cleanChildEmail).get();
+                if (lookupDoc.exists && lookupDoc.data()?['isActive'] == true) {
+                  linkedStudentId = lookupDoc.data()?['studentId'] as String?;
+                  resolvedClassId = lookupDoc.data()?['classId'] as String?;
+                }
+              } catch (_) {}
 
-            DocumentSnapshot? childDoc;
-            if (childQuery.docs.isNotEmpty) {
-              childDoc = childQuery.docs.first;
-            } else if (childEmail != null) {
-              var docById = await _db.collection('users').doc(childEmail).get();
-              if (docById.exists && docById.data()?['role'] == 'student') {
-                childDoc = docById;
+              // 2. Fallback: Query users by child email
+              if (linkedStudentId == null || linkedStudentId.isEmpty) {
+                var childQuery = await _db
+                    .collection('users')
+                    .where('email', isEqualTo: cleanChildEmail)
+                    .where('role', isEqualTo: 'student')
+                    .limit(1)
+                    .get();
+
+                if (childQuery.docs.isNotEmpty) {
+                  final childDoc = childQuery.docs.first;
+                  linkedStudentId = childDoc.id;
+                  resolvedClassId = childDoc.data()['classId'] as String?;
+                } else {
+                  var docById = await _db.collection('users').doc(cleanChildEmail).get();
+                  if (docById.exists && docById.data()?['role'] == 'student') {
+                    linkedStudentId = docById.id;
+                    resolvedClassId = docById.data()?['classId'] as String?;
+                  }
+                }
               }
             }
 
-            if (childDoc == null) {
+            if (linkedStudentId == null || linkedStudentId.isEmpty) {
               await user.delete();
               return 'Child not found. Please verify the child email address or Student ID.';
             }
-
-            final childData = childDoc.data() as Map<String, dynamic>? ?? {};
-            linkedStudentId = childDoc.id;
-            resolvedClassId = childData['classId'] as String?;
           }
         } catch (validationError) {
           debugPrint('Validation failed post-auth, rolling back: $validationError');

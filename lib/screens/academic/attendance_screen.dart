@@ -351,10 +351,11 @@ class _MarkLectureAttendanceScreenState
         title: Text('${lecture.subject} (${lecture.className})'),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        // Live student roster query by classId (with resilient matching)
+        // Scoped student roster query by classId
         stream: FirebaseFirestore.instance
-            .collection('users')
-            .where('role', isEqualTo: 'student')
+            .collection('classes')
+            .doc(lecture.classId)
+            .collection('members')
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -365,16 +366,7 @@ class _MarkLectureAttendanceScreenState
             return Center(child: Text('Error loading students: ${snapshot.error}'));
           }
 
-          final allStudents = snapshot.data?.docs ?? [];
-          final targetClassId = lecture.classId.trim().toUpperCase();
-          final students = allStudents.where((doc) {
-            final data = doc.data();
-            final cId = (data['classId'] ?? '').toString().trim().toUpperCase();
-            return cId.isNotEmpty &&
-                (cId == targetClassId ||
-                    targetClassId.contains(cId) ||
-                    cId.contains(targetClassId));
-          }).toList();
+          final students = snapshot.data?.docs ?? [];
 
           if (students.isEmpty) {
             return Center(

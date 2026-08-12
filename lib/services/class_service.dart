@@ -188,6 +188,22 @@ class ClassService {
 
       // 3. Update student user profile classId
       transaction.set(userRef, {'classId': newClassId}, SetOptions(merge: true));
+
+      // 4. Synchronize student_lookup document classId if email exists
+      final userSnap = await transaction.get(userRef);
+      if (userSnap.exists) {
+        final email = (userSnap.data()?['email'] as String?)?.trim().toLowerCase();
+        if (email != null && email.isNotEmpty) {
+          final lookupRef = _db.collection('student_lookup').doc(email);
+          transaction.set(lookupRef, {
+            'studentId': studentId,
+            'classId': newClassId,
+            'email': email,
+            'isActive': true,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
     });
   }
 

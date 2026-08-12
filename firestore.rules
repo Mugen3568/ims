@@ -110,8 +110,18 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /class_invites/{inviteCode} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && resource.data.get('isActive', true) == true;
       allow create, update, delete: if isAdmin();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    // STUDENT LOOKUP (PARENT SIGNUP LOOKUP)
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /student_lookup/{email} {
+      allow read: if isSignedIn() && resource.data.get('isActive', true) == true;
+      allow create, update: if isAdmin();
+      allow delete: if isOwner();
     }
 
     //////////////////////////////////////////////////////////////////////////////

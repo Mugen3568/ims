@@ -115,15 +115,11 @@ class _ResultEntryScreenState extends State<ResultEntryScreen> {
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: widget.test.classId.isNotEmpty
             ? FirebaseFirestore.instance
-                .collection('users')
-                .where('role', isEqualTo: 'student')
-                .where('classId', isEqualTo: widget.test.classId)
+                .collection('classes')
+                .doc(widget.test.classId)
+                .collection('members')
                 .snapshots()
-            : FirebaseFirestore.instance
-                .collection('users')
-                .where('role', isEqualTo: 'student')
-                .where('isVerified', isEqualTo: true)
-                .snapshots(),
+            : Stream<QuerySnapshot<Map<String, dynamic>>>.empty(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(child: Text('Error loading students: ${snapshot.error}'));
