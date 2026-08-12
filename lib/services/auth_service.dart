@@ -198,17 +198,13 @@ class AuthService extends ChangeNotifier {
 
           // ── Create student_lookup Entry for Student ──────────────────────────
           if (finalRole == 'student' && email.isNotEmpty) {
-            try {
-              await _db.collection('student_lookup').doc(email).set({
-                'studentId': user.uid,
-                'email': email,
-                'classId': resolvedClassId ?? '',
-                'isActive': true,
-                'createdAt': FieldValue.serverTimestamp(),
-              });
-            } catch (lookupErr) {
-              debugPrint('Failed to create student_lookup entry: $lookupErr');
-            }
+            await _db.collection('student_lookup').doc(email).set({
+              'studentId': user.uid,
+              'email': email,
+              'classId': resolvedClassId ?? '',
+              'isActive': true,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
           }
 
           // ── Auto-join class for Student upon signup via Invite Code ───────

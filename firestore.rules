@@ -68,7 +68,7 @@ service cloud.firestore {
         isAdmin() ||
         (isParent() && userId == getUserData().get('linkedStudentId', '')) ||
         (isStudent() && resource.data.get('linkedStudentId', '') == request.auth.uid) ||
-        isTeacher()
+        (isTeacher() && (resource.data.get('classId', '') in getUserData().get('assignedClasses', []) || resource.data.get('role', '') == 'teacher'))
       );
       allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow update: if isAdmin() || (
