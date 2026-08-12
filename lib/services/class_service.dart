@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/class_model.dart';
 
@@ -288,48 +289,27 @@ class ClassService {
     ).join();
   }
 
-  /// Finds an active course class by its invite code (or legacy joinCode).
+  /// Finds an active course class by its invite code.
+  /// Uses the dedicated class_invites collection exclusively.
   Future<CourseClass?> findByInviteCode(String code) async {
     final cleanCode = code.trim().toUpperCase();
     if (cleanCode.isEmpty) return null;
 
-    // 1. Direct document read on class_invites collection
     try {
       final inviteDoc = await _db.collection('class_invites').doc(cleanCode).get();
-      if (inviteDoc.exists && inviteDoc.data()?['isActive'] == true) {
-        final classId = inviteDoc.data()?['classId'] as String?;
-        if (classId != null && classId.isNotEmpty) {
-          final classDoc = await _db.collection('classes').doc(classId).get();
-          if (classDoc.exists && classDoc.data()?['isActive'] == true) {
-            return CourseClass.fromSnapshot(classDoc);
-          }
-        }
-      }
+      if (!inviteDoc.exists || inviteDoc.data()?['isActive'] != true) return null;
+
+      final classId = inviteDoc.data()?['classId'] as String?;
+      if (classId == null || classId.isEmpty) return null;
+
+      final classDoc = await _db.collection('classes').doc(classId).get();
+      if (!classDoc.exists || classDoc.data()?['isActive'] != true) return null;
+
+      return CourseClass.fromSnapshot(classDoc);
     } catch (e) {
-      // Fall through to query fallback
+      debugPrint('findByInviteCode error: $e');
+      return null;
     }
-
-    // 2. Fallback: Query classes by inviteCode / joinCode for legacy classes
-    var result = await _db
-        .collection('classes')
-        .where('inviteCode', isEqualTo: cleanCode)
-        .limit(1)
-        .get();
-
-    if (result.docs.isEmpty) {
-      result = await _db
-          .collection('classes')
-          .where('joinCode', isEqualTo: cleanCode)
-          .limit(1)
-          .get();
-    }
-
-    if (result.docs.isEmpty) return null;
-
-    final doc = result.docs.first;
-    if (doc.data()['isActive'] != true) return null;
-
-    return CourseClass.fromSnapshot(doc);
   }
 
   /// Regenerates and saves a new invite code for a class, invalidating the old one.

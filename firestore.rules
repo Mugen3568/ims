@@ -368,10 +368,8 @@ service cloud.firestore {
         && teacherId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "teacherId",
-          "perLecture",
           "completedLectures",
           "unpaidLectures",
-          "pendingSalary",
           "lastPaidAt",
           "updatedAt"
         ])
@@ -416,12 +414,12 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /chats/{chatId} {
-      allow read, create, update: if isSignedIn();
+      allow read, create, update: if isApproved();
       allow delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow read, create: if isSignedIn();
-        allow update, delete: if isSignedIn() && resource.data.sender_id == request.auth.uid;
+        allow read, create: if isApproved();
+        allow update, delete: if isApproved() && resource.data.sender_id == request.auth.uid;
       }
     }
 
@@ -483,7 +481,7 @@ service cloud.firestore {
     }
 
     match /notes/{noteId} {
-      allow read: if isSignedIn();
+      allow read: if isApproved();
       allow create, update, delete: if isAdmin() || isTeacher();
     }
 

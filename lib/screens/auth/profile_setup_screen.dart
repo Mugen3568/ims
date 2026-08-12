@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../models/class_model.dart';
-import '../../services/class_service.dart';
 
-/// ProfileSetupScreen — ghost-account recovery screen.
-/// Shown when a user has a Firebase Auth account but their Firestore document
-/// is missing or incomplete. Collects name + role-specific class data.
+/// ProfileSetupScreen — personal onboarding screen.
+/// Shown when a user has a Firebase Auth account but their Firestore profile
+/// is incomplete. Collects personal information only.
+/// Role, classId, assignedClasses, and linkedStudentId are established
+/// during registration or by Owner/Manager assignment — never here.
 class ProfileSetupScreen extends StatefulWidget {
   final String userId;
   final String role;
-  final bool roleMissing; // true if 'role' was missing/empty in Firestore
+  final bool roleMissing;
 
   const ProfileSetupScreen({
     super.key,
@@ -26,29 +26,38 @@ class ProfileSetupScreen extends StatefulWidget {
 
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _childEmailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
   bool _isLoading = false;
-  late String _selectedRole;
-
-  // Class selection
-  String? _selectedClassId; // Student & Parent
-  final Set<String> _selectedTeacherClasses = {}; // Teacher
-
-  final ClassService _classService = ClassService();
-  final List<String> _roles = ['student', 'teacher', 'parent', 'manager'];
 
   @override
   void initState() {
     super.initState();
-    _selectedRole = widget.roleMissing
-        ? 'student'
-        : widget.role.toLowerCase();
+    _loadExistingProfile();
+  }
+
+  Future<void> _loadExistingProfile() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .get();
+      if (doc.exists && mounted) {
+        final data = doc.data() ?? {};
+        setState(() {
+          _nameController.text = data['name'] ?? '';
+          _phoneController.text = data['phone'] ?? data['contact_number'] ?? '';
+          _addressController.text = data['address'] ?? '';
+        });
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _childEmailController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -59,83 +68,35 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       return;
     }
 
-    final effectiveRole = widget.roleMissing
-        ? _selectedRole.toLowerCase()
-        : widget.role.toLowerCase();
-
-    // Validate role-specific class fields
-    if (effectiveRole == 'teacher') {
-      if (_selectedTeacherClasses.isEmpty) {
-        _showSnack('Please select at least one assigned class');
-        return;
-      }
-    }
-    if (effectiveRole == 'student' || effectiveRole == 'parent') {
-      if (_selectedClassId == null || _selectedClassId!.isEmpty) {
-        _showSnack('Please select your class');
-        return;
-      }
-    }
-    if (effectiveRole == 'parent') {
-      if (_childEmailController.text.trim().isEmpty) {
-        _showSnack("Please enter your child's email");
-        return;
-      }
-    }
-
     setState(() => _isLoading = true);
 
     try {
       final db = FirebaseFirestore.instance;
-      final currentUserEmail =
-          (FirebaseAuth.instance.currentUser?.email ?? '').toLowerCase();
-      final childEmail = _childEmailController.text.trim().toLowerCase();
 
-      // Cross-check student email if linking parent
-      if (effectiveRole == 'parent' && widget.roleMissing) {
-        var childQuery = await db
-            .collection('directory')
-            .where('email', isEqualTo: childEmail)
-            .where('role', isEqualTo: 'student')
-            .get();
-
-        if (childQuery.docs.isEmpty) {
-          if (mounted) {
-            _showSnack('Associated student email not found in the system.');
-            setState(() => _isLoading = false);
-          }
-          return;
-        }
-      }
-
-      // Build profile data — personal onboarding fields only
+      // Personal onboarding fields only — no role, classId, or assignedClasses
       final Map<String, dynamic> data = {
         'name': cleanName,
+        'phone': _phoneController.text.trim(),
+        'contact_number': _phoneController.text.trim(),
+        'address': _addressController.text.trim(),
         'isProfileComplete': true,
         'is_profile_complete': true,
         'updatedAt': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       };
 
-      // Update primary user profile
       await db
           .collection('users')
           .doc(widget.userId)
           .set(data, SetOptions(merge: true));
 
-      if (effectiveRole == 'teacher' && _selectedTeacherClasses.isNotEmpty) {
-        await _classService.addTeacherToClasses(
-          teacherUid: widget.userId,
-          classIds: _selectedTeacherClasses.toList(),
-        );
-      }
-
-      // Update public directory
+      // Update public directory with name only
+      final currentUserEmail =
+          (FirebaseAuth.instance.currentUser?.email ?? '').toLowerCase();
       await db.collection('directory').doc(widget.userId).set({
         'name': cleanName,
         'email': currentUserEmail,
-        'role': effectiveRole,
-      });
+      }, SetOptions(merge: true));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -192,35 +153,56 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             ),
             const SizedBox(height: 16),
 
-            // ── Role picker (only for ghost accounts) ─────────────────────────
-            if (widget.roleMissing) ...[
-              DropdownButtonFormField<String>(
-                initialValue: _selectedRole,
-                decoration: const InputDecoration(
-                  labelText: 'Select Role',
-                  prefixIcon: Icon(Icons.badge_outlined),
-                ),
-                items: _roles.map((role) {
-                  return DropdownMenuItem(
-                    value: role,
-                    child: Text(role[0].toUpperCase() + role.substring(1)),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() {
-                      _selectedRole = val;
-                      _selectedClassId = null;
-                      _selectedTeacherClasses.clear();
-                    });
-                  }
-                },
+            // ── Phone ────────────────────────────────────────────────────────
+            TextField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Phone Number',
+                prefixIcon: Icon(Icons.phone_outlined),
               ),
-              const SizedBox(height: 16),
-            ],
+            ),
+            const SizedBox(height: 16),
 
-            // ── Role-specific class fields ────────────────────────────────────
-            _buildClassFields(isDark),
+            // ── Address ──────────────────────────────────────────────────────
+            TextField(
+              controller: _addressController,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+                prefixIcon: Icon(Icons.location_on_outlined),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // ── Info banner ──────────────────────────────────────────────────
+            if (widget.roleMissing)
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.orange.withValues(alpha: 0.4),
+                  ),
+                  color: Colors.orange.withValues(alpha: 0.06),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Your role and class assignment will be configured by your administrator.',
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: Colors.orange[800],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             const SizedBox(height: 24),
 
@@ -240,168 +222,6 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildClassFields(bool isDark) {
-    final effectiveRole = widget.roleMissing
-        ? _selectedRole
-        : widget.role.toLowerCase();
-
-    if (effectiveRole == 'teacher') {
-      return _buildTeacherCheckboxes(isDark);
-    }
-
-    if (effectiveRole == 'student') {
-      return _buildSingleClassDropdown('Select Your Class');
-    }
-
-    if (effectiveRole == 'parent') {
-      return Column(
-        children: [
-          TextField(
-            controller: _childEmailController,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(
-              labelText: "Child's Email Address",
-              prefixIcon: Icon(Icons.child_care_rounded),
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildSingleClassDropdown("Child's Class"),
-        ],
-      );
-    }
-
-    return const SizedBox.shrink();
-  }
-
-  Widget _buildSingleClassDropdown(String label) {
-    return StreamBuilder<List<CourseClass>>(
-      stream: _classService.activeClasses(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return InputDecorator(
-            decoration: InputDecoration(labelText: label),
-            child: const LinearProgressIndicator(),
-          );
-        }
-
-        final classes = snapshot.data ?? [];
-        if (classes.isEmpty) {
-          return Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
-              color: Colors.orange.withValues(alpha: 0.06),
-            ),
-            child: Text(
-              'No active classes found. Contact the administrator.',
-              style: GoogleFonts.poppins(fontSize: 12, color: Colors.orange),
-            ),
-          );
-        }
-
-        if (_selectedClassId != null &&
-            !classes.any((c) => c.id == _selectedClassId)) {
-          _selectedClassId = null;
-        }
-
-        return DropdownButtonFormField<String>(
-          initialValue: _selectedClassId,
-          decoration: InputDecoration(
-            labelText: label,
-            prefixIcon: const Icon(Icons.class_rounded),
-          ),
-          isExpanded: true,
-          hint: const Text('Select class'),
-          items: classes
-              .map(
-                (c) => DropdownMenuItem<String>(
-                  value: c.id,
-                  child: Text(c.displayName),
-                ),
-              )
-              .toList(),
-          onChanged: (val) => setState(() => _selectedClassId = val),
-        );
-      },
-    );
-  }
-
-  Widget _buildTeacherCheckboxes(bool isDark) {
-    return StreamBuilder<List<CourseClass>>(
-      stream: _classService.activeClasses(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const LinearProgressIndicator();
-        }
-
-        final classes = snapshot.data ?? [];
-        if (classes.isEmpty) {
-          return Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
-              color: Colors.orange.withValues(alpha: 0.06),
-            ),
-            child: Text(
-              'No active classes found. Contact the administrator.',
-              style: GoogleFonts.poppins(fontSize: 12, color: Colors.orange),
-            ),
-          );
-        }
-
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-              width: 1.5,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text(
-                  'Assigned Classes',
-                  style: GoogleFonts.poppins(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF0D47A1),
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              ...classes.map((c) {
-                final isChecked = _selectedTeacherClasses.contains(c.id);
-                return CheckboxListTile(
-                  value: isChecked,
-                  onChanged: (checked) {
-                    setState(() {
-                      if (checked == true) {
-                        _selectedTeacherClasses.add(c.id);
-                      } else {
-                        _selectedTeacherClasses.remove(c.id);
-                      }
-                    });
-                  },
-                  title: Text(
-                    c.displayName,
-                    style: GoogleFonts.poppins(fontSize: 13),
-                  ),
-                  activeColor: const Color(0xFF0D47A1),
-                  dense: true,
-                );
-              }),
-            ],
-          ),
-        );
-      },
     );
   }
 }
