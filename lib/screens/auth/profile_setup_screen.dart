@@ -108,45 +108,16 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         }
       }
 
-      // Build profile data
+      // Build profile data — personal onboarding fields only
       final Map<String, dynamic> data = {
         'name': cleanName,
         'isProfileComplete': true,
         'is_profile_complete': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
       };
 
-      // If role was missing, set role and role-specific defaults
-      if (widget.roleMissing) {
-        data['role'] = effectiveRole;
-        data['email'] = currentUserEmail;
-
-        if (effectiveRole == 'teacher') {
-          data['assignedClasses'] = _selectedTeacherClasses.toList();
-          data['total_lectures_taken'] = 0;
-          data['unpaid_lectures'] = 0;
-          data['rate_per_lecture'] = 0;
-        } else if (effectiveRole == 'student') {
-          data['classId'] = _selectedClassId ?? '';
-          data['linked_parent_email'] = '';
-        } else if (effectiveRole == 'parent') {
-          data['classId'] = _selectedClassId ?? '';
-          data['childEmail'] = childEmail;
-        }
-      } else {
-        // Even if role exists, update class if it was missing
-        if (effectiveRole == 'teacher' && _selectedTeacherClasses.isNotEmpty) {
-          data['assignedClasses'] = _selectedTeacherClasses.toList();
-        }
-        if ((effectiveRole == 'student' || effectiveRole == 'parent') &&
-            _selectedClassId != null) {
-          data['classId'] = _selectedClassId!;
-        }
-        if (effectiveRole == 'parent' && childEmail.isNotEmpty) {
-          data['childEmail'] = childEmail;
-        }
-      }
-
-      // Force-set with merge to handle ghost accounts
+      // Update primary user profile
       await db
           .collection('users')
           .doc(widget.userId)

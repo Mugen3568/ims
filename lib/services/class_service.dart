@@ -277,13 +277,29 @@ class ClassService {
     final cleanCode = code.trim().toUpperCase();
     if (cleanCode.isEmpty) return null;
 
+    // 1. Direct document read on class_invites collection
+    try {
+      final inviteDoc = await _db.collection('class_invites').doc(cleanCode).get();
+      if (inviteDoc.exists && inviteDoc.data()?['isActive'] == true) {
+        final classId = inviteDoc.data()?['classId'] as String?;
+        if (classId != null && classId.isNotEmpty) {
+          final classDoc = await _db.collection('classes').doc(classId).get();
+          if (classDoc.exists && classDoc.data()?['isActive'] == true) {
+            return CourseClass.fromSnapshot(classDoc);
+          }
+        }
+      }
+    } catch (e) {
+      // Fall through to query fallback
+    }
+
+    // 2. Fallback: Query classes by inviteCode / joinCode for legacy classes
     var result = await _db
         .collection('classes')
         .where('inviteCode', isEqualTo: cleanCode)
         .limit(1)
         .get();
 
-    // Fallback: Check legacy joinCode for backwards compatibility with legacy classes
     if (result.docs.isEmpty) {
       result = await _db
           .collection('classes')
@@ -312,6 +328,11 @@ class ClassService {
       updateData['inviteCodeResetBy'] = resetByUid;
     }
     await _db.collection('classes').doc(classId).update(updateData);
+    await _db.collection('class_invites').doc(newInvite).set({
+      'classId': classId,
+      'isActive': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
     return newInvite;
   }
 
@@ -351,6 +372,13 @@ class ClassService {
       'inviteCodeCreatedBy': createdByUid,
       'inviteCodeVersion': 1,
       'teacherIds': [],          // reverse index: populated when teachers are assigned
+    });
+
+    // Populate class_invites collection document for zero-bypass invite lookups
+    await _db.collection('class_invites').doc(inviteCode).set({
+      'classId': docId,
+      'isActive': true,
+      'createdAt': FieldValue.serverTimestamp(),
     });
 
     return docId;

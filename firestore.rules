@@ -63,12 +63,18 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /users/{userId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isAdmin() ||
+        (isParent() && userId == getUserData().get('linkedStudentId', '')) ||
+        (isStudent() && resource.data.get('linkedStudentId', '') == request.auth.uid) ||
+        isTeacher()
+      );
       allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow update: if isAdmin() || (
         request.auth.uid == userId && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "name", "photoUrl", "phone", "contact_number", "address", "bio", "deviceToken", "lastSeen", "updatedAt", "updated_at", "childEmail", "isProfileComplete", "is_profile_complete"
+            "name", "photoUrl", "phone", "contact_number", "address", "bio", "deviceToken", "lastSeen", "updatedAt", "updated_at", "isProfileComplete", "is_profile_complete"
           ]) || (
             role() == "teacher" &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -100,12 +106,20 @@ service cloud.firestore {
     }
 
     //////////////////////////////////////////////////////////////////////////////
+    // DEDICATED CLASS INVITES (REGISTRATION LOOKUP)
+    //////////////////////////////////////////////////////////////////////////////
+
+    match /class_invites/{inviteCode} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
     // CLASSES
     //////////////////////////////////////////////////////////////////////////////
 
     match /classes/{classId} {
-      allow read: if isSignedIn() && (
-        resource.data.get('isActive', true) == true ||
+      allow read: if isApproved() && (
         isAdmin() ||
         (isTeacher() && (
           classId in getUserData().get('assignedClasses', []) ||
@@ -151,7 +165,22 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /lectures/{lectureId} {
-      allow read: if isSignedIn();
+      allow read: if isApproved() && (
+        isAdmin() ||
+        (isTeacher() && (
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.classId in getUserData().get('assignedClasses', [])
+        )) ||
+        (isStudent() && resource.data.classId == getUserData().get('classId', '')) ||
+        (isParent() && (
+          resource.data.classId == getUserData().get('classId', '') ||
+          (
+            getUserData().get('linkedStudentId', '') != '' &&
+            exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+            resource.data.classId == get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '')
+          )
+        ))
+      );
       allow create: if isAdmin();
       allow update: if isAdmin()
         || (
@@ -212,7 +241,22 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /tests/{testId} {
-      allow read: if isSignedIn();
+      allow read: if isApproved() && (
+        isAdmin() ||
+        (isTeacher() && (
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.classId in getUserData().get('assignedClasses', [])
+        )) ||
+        (isStudent() && resource.data.classId == getUserData().get('classId', '')) ||
+        (isParent() && (
+          resource.data.classId == getUserData().get('classId', '') ||
+          (
+            getUserData().get('linkedStudentId', '') != '' &&
+            exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+            resource.data.classId == get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '')
+          )
+        ))
+      );
       allow create: if isAdmin() || isTeacher();
       allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
       allow delete: if isAdmin();
@@ -238,7 +282,22 @@ service cloud.firestore {
     //////////////////////////////////////////////////////////////////////////////
 
     match /study_materials/{materialId} {
-      allow read: if isSignedIn();
+      allow read: if isApproved() && (
+        isAdmin() ||
+        (isTeacher() && (
+          resource.data.teacherId == request.auth.uid ||
+          resource.data.classId in getUserData().get('assignedClasses', [])
+        )) ||
+        (isStudent() && resource.data.classId == getUserData().get('classId', '')) ||
+        (isParent() && (
+          resource.data.classId == getUserData().get('classId', '') ||
+          (
+            getUserData().get('linkedStudentId', '') != '' &&
+            exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+            resource.data.classId == get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '')
+          )
+        ))
+      );
       allow create: if isAdmin() || isTeacher();
       allow update: if isAdmin() || (
         isTeacher()
@@ -331,7 +390,13 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read, create: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
-        allow update: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow update: if isSignedIn() && (
+          resource.data.senderId == request.auth.uid ||
+          (
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["isRead", "readAt", "read_at"])
+          )
+        );
         allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
       }
     }
@@ -351,12 +416,28 @@ service cloud.firestore {
     }
 
     match /groups/{groupId} {
-      allow read, create, update: if isSignedIn();
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.get('members', []) ||
+        request.auth.uid in resource.data.get('memberIds', []) ||
+        isAdmin()
+      );
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.get('members', []) ||
+        request.auth.uid in resource.data.get('memberIds', []) ||
+        isAdmin()
+      );
       allow delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow read, create, update: if isSignedIn();
-        allow delete: if isAdmin() || (isSignedIn() && resource.data.sender_id == request.auth.uid);
+        allow read, create: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.get('members', []) ||
+          request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.get('memberIds', []) ||
+          isAdmin()
+        );
+        allow update, delete: if isSignedIn() && (
+          resource.data.sender_id == request.auth.uid || isAdmin()
+        );
       }
     }
 
