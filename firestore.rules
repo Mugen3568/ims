@@ -157,14 +157,45 @@ service cloud.firestore {
       allow delete: if isOwner();
 
       match /members/{memberId} {
-        allow read: if isSignedIn();
+        allow read: if isApproved() && (
+          isAdmin() ||
+          (isTeacher() && (
+            classId in getUserData().get('assignedClasses', []) ||
+            request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.get('teacherIds', []) ||
+            get(/databases/$(database)/documents/classes/$(classId)).data.get('teacherId', '') == request.auth.uid
+          )) ||
+          (isStudent() && (getUserData().get('classId', '') == classId || request.auth.uid == memberId)) ||
+          (isParent() && (
+            getUserData().get('classId', '') == classId ||
+            (
+              getUserData().get('linkedStudentId', '') != '' &&
+              exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+              get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '') == classId
+            )
+          ))
+        );
         allow create: if isSignedIn() && (request.auth.uid == memberId || isAdmin());
         allow update, delete: if isAdmin();
       }
 
       match /messages/{messageId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn();
+        allow read, create: if isApproved() && (
+          isAdmin() ||
+          (isTeacher() && (
+            classId in getUserData().get('assignedClasses', []) ||
+            request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.get('teacherIds', []) ||
+            get(/databases/$(database)/documents/classes/$(classId)).data.get('teacherId', '') == request.auth.uid
+          )) ||
+          (isStudent() && getUserData().get('classId', '') == classId) ||
+          (isParent() && (
+            getUserData().get('classId', '') == classId ||
+            (
+              getUserData().get('linkedStudentId', '') != '' &&
+              exists(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))) &&
+              get(/databases/$(database)/documents/users/$(getUserData().get('linkedStudentId', ''))).data.get('classId', '') == classId
+            )
+          ))
+        );
         allow update: if request.auth.uid == resource.data.senderId;
         allow delete: if request.auth.uid == resource.data.senderId || isAdmin();
       }
