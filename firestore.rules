@@ -68,7 +68,7 @@ service cloud.firestore {
         isAdmin() ||
         (isParent() && userId == getUserData().get('linkedStudentId', '')) ||
         (isStudent() && resource.data.get('linkedStudentId', '') == request.auth.uid) ||
-        (isTeacher() && (resource.data.get('classId', '') in getUserData().get('assignedClasses', []) || resource.data.get('role', '') == 'teacher'))
+        (isTeacher() && resource.data.get('classId', '') in getUserData().get('assignedClasses', []))
       );
       allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow update: if isAdmin() || (
@@ -368,11 +368,14 @@ service cloud.firestore {
         && teacherId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "teacherId",
+          "perLecture",
           "completedLectures",
           "unpaidLectures",
+          "pendingSalary",
           "lastPaidAt",
           "updatedAt"
         ])
+        && request.resource.data.get('perLecture', 0) == resource.data.get('perLecture', 0)
       );
       allow delete: if isOwner();
     }
