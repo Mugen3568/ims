@@ -83,21 +83,19 @@ class AuthService extends ChangeNotifier {
         try {
           if (role == 'student' && (resolvedClassId == null || resolvedClassId.isEmpty)) {
             if (inviteCode != null && inviteCode.isNotEmpty) {
-              final courseClass = await ClassService(
+              resolvedClassId = await ClassService(
                 firestore: _db,
-              ).findByInviteCode(inviteCode);
-              if (courseClass == null) {
+              ).resolveClassIdByInviteCode(inviteCode);
+              if (resolvedClassId == null || resolvedClassId.isEmpty) {
                 await user.delete();
                 return 'Invalid or inactive class invite code. Please check with your administrator.';
               }
-              resolvedClassId = courseClass.id;
             }
           }
 
           if (role == 'parent') {
             final cleanChildEmail = (childEmail ?? '').trim().toLowerCase();
             if (cleanChildEmail.isNotEmpty) {
-              // 1. Direct get on student_lookup collection
               try {
                 final lookupDoc =
                     await _db.collection('student_lookup').doc(cleanChildEmail).get();
@@ -105,34 +103,14 @@ class AuthService extends ChangeNotifier {
                   linkedStudentId = lookupDoc.data()?['studentId'] as String?;
                   resolvedClassId = lookupDoc.data()?['classId'] as String?;
                 }
-              } catch (_) {}
-
-              // 2. Fallback: Query users by child email
-              if (linkedStudentId == null || linkedStudentId.isEmpty) {
-                var childQuery = await _db
-                    .collection('users')
-                    .where('email', isEqualTo: cleanChildEmail)
-                    .where('role', isEqualTo: 'student')
-                    .limit(1)
-                    .get();
-
-                if (childQuery.docs.isNotEmpty) {
-                  final childDoc = childQuery.docs.first;
-                  linkedStudentId = childDoc.id;
-                  resolvedClassId = childDoc.data()['classId'] as String?;
-                } else {
-                  var docById = await _db.collection('users').doc(cleanChildEmail).get();
-                  if (docById.exists && docById.data()?['role'] == 'student') {
-                    linkedStudentId = docById.id;
-                    resolvedClassId = docById.data()?['classId'] as String?;
-                  }
-                }
+              } catch (e) {
+                debugPrint('Parent student_lookup query error: $e');
               }
             }
 
             if (linkedStudentId == null || linkedStudentId.isEmpty) {
               await user.delete();
-              return 'Child not found. Please verify the child email address or Student ID.';
+              return 'Child student email not found. Please verify with your administrator.';
             }
           }
         } catch (validationError) {
@@ -190,8 +168,8 @@ class AuthService extends ChangeNotifier {
             'approvalStatus': approvalStatus,
             'accountStatus': accountStatus,
             'isVerified': (approvalStatus == ApprovalStatus.approved),
-            'isProfileComplete': true,
-            'is_profile_complete': true,
+            'isProfileComplete': false,
+            'is_profile_complete': false,
             'createdAt': FieldValue.serverTimestamp(),
             'created_at': FieldValue.serverTimestamp(),
             'updatedAt': FieldValue.serverTimestamp(),
@@ -199,10 +177,6 @@ class AuthService extends ChangeNotifier {
 
           // Role-specific fields
           if (finalRole == 'teacher') {
-            // Always starts empty for self-registered teachers; Owner/Manager
-            // populates this later via ClassService.addTeacherToClasses,
-            // after approval. Only isCreatedByAdmin flows pass a non-empty
-            // list here.
             userDoc['assignedClasses'] = assignedClasses ?? [];
             userDoc['total_lectures_taken'] = 0;
             userDoc['unpaid_lectures'] = 0;
@@ -222,6 +196,21 @@ class AuthService extends ChangeNotifier {
           // Save primary profile
           await _db.collection('users').doc(user.uid).set(userDoc);
 
+          // ── Create student_lookup Entry for Student ──────────────────────────
+          if (finalRole == 'student' && email.isNotEmpty) {
+            try {
+              await _db.collection('student_lookup').doc(email).set({
+                'studentId': user.uid,
+                'email': email,
+                'classId': resolvedClassId ?? '',
+                'isActive': true,
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+            } catch (lookupErr) {
+              debugPrint('Failed to create student_lookup entry: $lookupErr');
+            }
+          }
+
           // ── Auto-join class for Student upon signup via Invite Code ───────
           if (finalRole == 'student' &&
               resolvedClassId != null &&
@@ -233,13 +222,17 @@ class AuthService extends ChangeNotifier {
                 studentName: name,
               );
             } catch (autoJoinError) {
-              debugPrint('Auto-join class error on student signup: $autoJoinError');
+              debugPrint('Auto-join class error on student signup, performing rollback: $autoJoinError');
+              try {
+                await _db.collection('users').doc(user.uid).delete();
+                await _db.collection('student_lookup').doc(email).delete();
+                await user.delete();
+              } catch (_) {}
+              return 'Failed to join assigned class. Please try again.';
             }
           }
 
           // ── Reverse index: populate class.teacherIds ───────────────────────
-          // Only runs for the isCreatedByAdmin path now, since that's the
-          // only path where assignedClasses can be non-empty at this point.
           if (finalRole == 'teacher' &&
               assignedClasses != null &&
               assignedClasses.isNotEmpty) {
@@ -257,7 +250,11 @@ class AuthService extends ChangeNotifier {
           });
         } catch (setupError) {
           debugPrint('Critical setup failure: $setupError');
-          await user.delete();
+          try {
+            await _db.collection('users').doc(user.uid).delete();
+            await _db.collection('student_lookup').doc(email).delete();
+            await user.delete();
+          } catch (_) {}
           return 'Failed to complete registration setup. Please try again.';
         }
 

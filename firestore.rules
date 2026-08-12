@@ -120,7 +120,7 @@ service cloud.firestore {
 
     match /student_lookup/{email} {
       allow read: if isSignedIn() && resource.data.get('isActive', true) == true;
-      allow create, update: if isAdmin();
+      allow create, update: if isAdmin() || (isSignedIn() && request.resource.data.studentId == request.auth.uid);
       allow delete: if isOwner();
     }
 

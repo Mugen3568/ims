@@ -289,6 +289,26 @@ class ClassService {
     ).join();
   }
 
+  /// Resolves a classId from an invite code using class_invites collection only.
+  /// Does NOT read /classes/{classId} document, avoiding permission checks during signup.
+  Future<String?> resolveClassIdByInviteCode(String code) async {
+    final cleanCode = code.trim().toUpperCase();
+    if (cleanCode.isEmpty) return null;
+
+    try {
+      final inviteDoc = await _db.collection('class_invites').doc(cleanCode).get();
+      if (inviteDoc.exists && inviteDoc.data()?['isActive'] == true) {
+        final classId = inviteDoc.data()?['classId'] as String?;
+        if (classId != null && classId.isNotEmpty) {
+          return classId;
+        }
+      }
+    } catch (e) {
+      debugPrint('resolveClassIdByInviteCode error: $e');
+    }
+    return null;
+  }
+
   /// Finds an active course class by its invite code.
   /// Uses the dedicated class_invites collection exclusively.
   Future<CourseClass?> findByInviteCode(String code) async {
