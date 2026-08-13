@@ -85,6 +85,9 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   subtitle: const Text('Safely log out of your IMS account'),
                   onTap: () async {
+                    if (Navigator.of(context).canPop()) {
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                    }
                     await Provider.of<AuthService>(
                       context,
                       listen: false,

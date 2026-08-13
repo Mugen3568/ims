@@ -106,6 +106,11 @@ class _AuthenticatedUserGateState extends State<AuthenticatedUserGate> {
           );
         }
 
+        if (userSnapshot.hasError) {
+          debugPrint('User doc stream error (sign-out or permission): ${userSnapshot.error}');
+          return const LoginScreen();
+        }
+
         if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
           // Give Firestore 5 seconds to finish saving before panicking.
           final creationTime = currentUser.metadata.creationTime;
