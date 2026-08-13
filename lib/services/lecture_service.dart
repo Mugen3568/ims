@@ -428,34 +428,38 @@ class LectureService {
     });
   }
 
-  /// Stream of lectures for an assigned Teacher (excluding archived)
+  /// Stream of lectures for an assigned Teacher (excluding archived).
+  /// Uses a Firestore-side where() so the security rule
+  /// `resource.data.teacherId == request.auth.uid` is satisfied for list queries.
   Stream<List<Lecture>> teacherLecturesStream(String teacherUid) {
-    return _db.collection('lectures').snapshots().map((snap) {
+    return _db
+        .collection('lectures')
+        .where('teacherId', isEqualTo: teacherUid)
+        .snapshots()
+        .map((snap) {
       final list = snap.docs
           .map((d) => Lecture.fromSnapshot(d))
-          .where((l) => l.teacherId == teacherUid && l.status != 'archived')
+          .where((l) => l.status != 'archived')
           .toList();
       list.sort((a, b) => a.startDateTime.compareTo(b.startDateTime));
       return list;
     });
   }
 
-  /// Stream of lectures for a Student's class (excluding archived & cancelled)
+  /// Stream of lectures for a Student's class (excluding archived & cancelled).
+  /// Uses a Firestore-side where() so the security rule
+  /// `resource.data.classId == getUserData().get('classId', '')` is satisfied
+  /// for list queries. Archived/cancelled filtering remains client-side.
   Stream<List<Lecture>> studentLecturesStream(String classId) {
-    final cleanClassId = classId.trim().toUpperCase();
-    return _db.collection('lectures').snapshots().map((snap) {
+    final cleanClassId = classId.trim();
+    return _db
+        .collection('lectures')
+        .where('classId', isEqualTo: cleanClassId)
+        .snapshots()
+        .map((snap) {
       final list = snap.docs
           .map((d) => Lecture.fromSnapshot(d))
-          .where((l) {
-            final lClass = l.classId.trim().toUpperCase();
-            final matchesClass = cleanClassId.isNotEmpty &&
-                (lClass == cleanClassId ||
-                    cleanClassId.contains(lClass) ||
-                    lClass.contains(cleanClassId));
-            return matchesClass &&
-                l.status != 'archived' &&
-                l.status != 'cancelled';
-          })
+          .where((l) => l.status != 'archived' && l.status != 'cancelled')
           .toList();
       list.sort((a, b) => a.startDateTime.compareTo(b.startDateTime));
       return list;

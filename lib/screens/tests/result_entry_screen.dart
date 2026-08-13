@@ -142,7 +142,7 @@ class _ResultEntryScreenState extends State<ResultEntryScreen> {
           }
 
           return StreamBuilder<List<TestResultModel>>(
-            stream: _testService.testResultsStream(testId),
+            stream: _testService.teacherTestResultsStream(testId, widget.teacherId),
             builder: (context, existingResultsSnapshot) {
               final existingMap = <String, TestResultModel>{};
               if (existingResultsSnapshot.hasData) {

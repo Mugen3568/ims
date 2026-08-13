@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/test_model.dart';
 import '../../services/test_service.dart';
+import '../tests/create_test_dialog.dart';
 
 /// TestsScreen — Production Test Creation, Marks Entry, & Grade Cards Hub
 class TestsScreen extends StatelessWidget {
@@ -37,165 +38,43 @@ class _StaffTestsView extends StatefulWidget {
 
 class _StaffTestsViewState extends State<_StaffTestsView> {
   final TestService _testService = TestService();
+  late final String _uid;
+  late final Stream<List<TestModel>> _testsStream;
 
-  void _showCreateTestDialog() {
-    final titleCtrl = TextEditingController();
-    final subjectCtrl = TextEditingController();
-    final maxMarksCtrl = TextEditingController(text: '100');
-    final linkCtrl = TextEditingController();
+  @override
+  void initState() {
+    super.initState();
+    _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (widget.userRole == 'teacher') {
+      // Scoped query: satisfies rule `resource.data.teacherId == request.auth.uid`
+      _testsStream = _testService.teacherTestsStream(_uid);
+    } else {
+      // Owner / Manager: allowed to query all tests
+      _testsStream = _testService
+          .allTests()
+          .map((snap) => snap.docs.map((d) => TestModel.fromSnapshot(d)).toList());
+    }
+  }
 
-    String? selectedClassId;
-    String? selectedClassName;
-    DateTime selectedDate = DateTime.now();
-
+  void _openCreateTestDialog() {
     showDialog(
       context: context,
-      builder: (dialogCtx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(
-            'Create New Test',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Test Name / Title *',
-                    hintText: 'e.g. Mid-Term Examination',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance.collection('classes').snapshots(),
-                  builder: (context, snapshot) {
-                    final classes = snapshot.data?.docs ?? [];
-                    return DropdownButtonFormField<String>(
-                      initialValue: selectedClassId,
-                      decoration: const InputDecoration(
-                        labelText: 'Target Class *',
-                        prefixIcon: Icon(Icons.class_rounded),
-                      ),
-                      items: classes.map((c) {
-                        final data = c.data() as Map<String, dynamic>;
-                        final name = data['name'] ?? c.id;
-                        return DropdownMenuItem(
-                          value: c.id,
-                          child: Text(name),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          final doc = classes.firstWhere((c) => c.id == val);
-                          final data = doc.data() as Map<String, dynamic>;
-                          setDialogState(() {
-                            selectedClassId = val;
-                            selectedClassName = data['name'] ?? val;
-                          });
-                        }
-                      },
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: subjectCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Subject *',
-                    hintText: 'e.g. Mathematics',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: maxMarksCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Max Marks *',
-                    hintText: 'e.g. 100',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: linkCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'External Test Paper Link (Optional)',
-                    hintText: 'https://drive.google.com/test-paper',
-                    prefixIcon: Icon(Icons.link_rounded),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogCtx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final name = titleCtrl.text.trim();
-                final subject = subjectCtrl.text.trim();
-                final maxM = double.tryParse(maxMarksCtrl.text.trim()) ?? 0.0;
-
-                if (name.isEmpty || subject.isEmpty || selectedClassId == null || maxM <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please fill all required fields correctly.')),
-                  );
-                  return;
-                }
-
-                final user = FirebaseAuth.instance.currentUser;
-                final userName = user?.displayName ?? user?.email ?? 'Teacher';
-
-                await _testService.createTest(
-                  testName: name,
-                  classId: selectedClassId!,
-                  className: selectedClassName ?? selectedClassId!,
-                  subject: subject,
-                  teacherId: user?.uid ?? '',
-                  teacherName: userName,
-                  maxMarks: maxM,
-                  testDate: selectedDate,
-                  externalLink: linkCtrl.text,
-                  createdBy: user?.uid ?? '',
-                );
-
-                if (dialogCtx.mounted) {
-                  Navigator.pop(dialogCtx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Test "$name" created successfully!'),
-                      backgroundColor: Colors.green[700],
-                    ),
-                  );
-                }
-              },
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0D47A1)),
-              child: const Text('Create Test'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => CreateTestDialog(userRole: widget.userRole),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       appBar: AppBar(title: const Text('Test & Exam Management')),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('tests').snapshots(),
+      body: StreamBuilder<List<TestModel>>(
+        stream: _testsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final docs = snapshot.data?.docs ?? [];
-          final tests = docs.map((d) => TestModel.fromSnapshot(d)).toList();
+          final tests = snapshot.data ?? [];
           tests.sort((a, b) => b.testDate.compareTo(a.testDate));
 
           if (tests.isEmpty) {
@@ -211,7 +90,7 @@ class _StaffTestsViewState extends State<_StaffTestsView> {
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
-                    onPressed: _showCreateTestDialog,
+                    onPressed: _openCreateTestDialog,
                     icon: const Icon(Icons.add),
                     label: const Text('Create Test'),
                   ),
@@ -302,7 +181,7 @@ class _StaffTestsViewState extends State<_StaffTestsView> {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showCreateTestDialog,
+        onPressed: _openCreateTestDialog,
         icon: const Icon(Icons.add),
         label: const Text('Create Test'),
         backgroundColor: const Color(0xFF0D47A1),

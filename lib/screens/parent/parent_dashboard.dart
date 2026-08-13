@@ -30,14 +30,14 @@ class _ParentLinkStudentCardState extends State<ParentLinkStudentCard> {
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser != null) {
-        // Verify the student exists first
-        var studentQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .where('email', isEqualTo: email)
-            .where('role', isEqualTo: 'student')
+        // Use student_lookup — readable by all signed-in users per Firestore rule,
+        // avoids the /users collection-level query that teachers/parents cannot perform.
+        final lookupDoc = await FirebaseFirestore.instance
+            .collection('student_lookup')
+            .doc(email.toLowerCase())
             .get();
 
-        if (studentQuery.docs.isEmpty) {
+        if (!lookupDoc.exists || lookupDoc.data()?['isActive'] != true) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -50,12 +50,12 @@ class _ParentLinkStudentCardState extends State<ParentLinkStudentCard> {
           return;
         }
 
-        // Update the parent's document with the target student
-        // Force isVerified to false so AuthWrapper catches them
+        // Update the parent's document — only childEmail (no isVerified write;
+        // isVerified is not in the parent self-update whitelist).
         await FirebaseFirestore.instance
             .collection('users')
             .doc(currentUser.uid)
-            .update({'childEmail': email, 'isVerified': false});
+            .update({'childEmail': email});
 
         // AuthWrapper will automatically redirect to PendingParentApprovalScreen
         if (mounted) {
@@ -186,6 +186,41 @@ class _ParentLinkStudentCardState extends State<ParentLinkStudentCard> {
 class ParentDashboard extends StatelessWidget {
   const ParentDashboard({super.key});
 
+  /// Returns a typed stream of the linked student's Firestore document.
+  /// Preference order:
+  ///   1. users/{linkedStudentId} — direct read, rule explicitly allows isParent() && userId==linkedStudentId
+  ///   2. Fallback: student_lookup/{childEmail} → resolve studentId → users/{studentId}
+  Stream<DocumentSnapshot<Map<String, dynamic>>> _studentStream(
+      Map<String, dynamic>? userData) {
+    final linkedStudentId =
+        (userData?['linkedStudentId'] ?? '').toString().trim();
+    if (linkedStudentId.isNotEmpty) {
+      return FirebaseFirestore.instance
+          .collection('users')
+          .doc(linkedStudentId)
+          .snapshots();
+    }
+
+    // Fallback: resolve via student_lookup (allowed for all signed-in users)
+    final childEmail =
+        (userData?['childEmail'] ?? '').toString().toLowerCase().trim();
+    if (childEmail.isEmpty) return const Stream.empty();
+
+    return FirebaseFirestore.instance
+        .collection('student_lookup')
+        .doc(childEmail)
+        .snapshots()
+        .asyncExpand((lookupSnap) {
+      final studentId =
+          (lookupSnap.data()?['studentId'] ?? '').toString().trim();
+      if (studentId.isEmpty) return const Stream.empty();
+      return FirebaseFirestore.instance
+          .collection('users')
+          .doc(studentId)
+          .snapshots();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -233,32 +268,27 @@ class ParentDashboard extends StatelessWidget {
                 if (linkedStudentEmail.isEmpty)
                   const ParentLinkStudentCard()
                 else
-                  // Linked Student Info Card
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .where('email', isEqualTo: linkedStudentEmail)
-                        .where('role', isEqualTo: 'student')
-                        .limit(1)
-                        .snapshots(),
+                // Linked Student Info Card — read users/{linkedStudentId} directly.
+                // Rule allows: isParent() && userId == linkedStudentId.
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: _studentStream(userData),
                     builder: (context, studentSnapshot) {
                       if (!studentSnapshot.hasData ||
-                          studentSnapshot.data!.docs.isEmpty) {
+                          !studentSnapshot.data!.exists) {
                         return Card(
                           child: Padding(
                             padding: const EdgeInsets.all(16.0),
                             child: Text(
-                              'Student profile not found for: $linkedStudentEmail',
+                              'Student profile not found.',
                               style: TextStyle(color: theme.colorScheme.error),
                             ),
                           ),
                         );
                       }
 
-                      var studentData =
-                          studentSnapshot.data!.docs.first.data()
-                              as Map<String, dynamic>;
-                      String studentName = studentData['name'] ?? 'Student';
+                      final studentData =
+                          studentSnapshot.data!.data() as Map<String, dynamic>;
+                      final studentName = studentData['name'] ?? 'Student';
 
                       return Card(
                         child: Padding(
@@ -307,6 +337,7 @@ class ParentDashboard extends StatelessWidget {
                       );
                     },
                   ),
+
 
                 const SizedBox(height: 24),
 

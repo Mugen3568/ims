@@ -70,11 +70,20 @@ service cloud.firestore {
         (isStudent() && resource.data.get('linkedStudentId', '') == request.auth.uid) ||
         (isTeacher() && resource.data.get('classId', '') in getUserData().get('assignedClasses', []))
       );
-      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (
+          request.auth.uid == userId &&
+          !request.resource.data.get('role', '').lower().matches('owner|super_admin|manager') &&
+          request.resource.data.get('approvalStatus', 'pending').lower() == 'pending' &&
+          request.resource.data.get('accountStatus', 'active').lower() == 'active' &&
+          request.resource.data.get('isVerified', false) == false
+        )
+      );
       allow update: if isAdmin() || (
         request.auth.uid == userId && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "name", "photoUrl", "phone", "contact_number", "address", "bio", "deviceToken", "lastSeen", "updatedAt", "updated_at", "isProfileComplete", "is_profile_complete"
+            "name", "photoUrl", "phone", "contact_number", "address", "bio", "deviceToken", "lastSeen", "updatedAt", "updated_at", "isProfileComplete", "is_profile_complete", "childEmail"
           ]) || (
             role() == "teacher" &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -298,8 +307,18 @@ service cloud.firestore {
           )
         ))
       );
-      allow create: if isAdmin() || isTeacher();
-      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.classId in getUserData().get('assignedClasses', [])
+      );
+      allow update: if isAdmin() || (
+        isTeacher()
+        && resource.data.teacherId == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'teacherId', 'classId', 'createdBy'
+        ])
+      );
       allow delete: if isAdmin();
     }
 
@@ -313,8 +332,14 @@ service cloud.firestore {
       allow read: if isStudent() && resource.data.studentId == request.auth.uid;
       allow read: if isParent() && resource.data.studentId == getUserData().get('linkedStudentId', '');
 
-      allow create: if isAdmin() || isTeacher();
-      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isTeacher() &&
+        resource.data.teacherId == request.auth.uid &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'teacherId', 'studentId', 'testId', 'classId'
+        ])
+      );
       allow delete: if isAdmin();
     }
 
@@ -339,7 +364,11 @@ service cloud.firestore {
           )
         ))
       );
-      allow create: if isAdmin() || isTeacher();
+      allow create: if isAdmin() || (
+        isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.classId in getUserData().get('assignedClasses', [])
+      );
       allow update: if isAdmin() || (
         isTeacher()
         && resource.data.teacherId == request.auth.uid
@@ -464,10 +493,11 @@ service cloud.firestore {
         isAdmin()
       );
       allow create: if isSignedIn();
-      allow update: if isSignedIn() && (
-        request.auth.uid in resource.data.get('members', []) ||
-        request.auth.uid in resource.data.get('memberIds', []) ||
-        isAdmin()
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        (request.auth.uid in resource.data.get('members', []) ||
+         request.auth.uid in resource.data.get('memberIds', [])) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['members', 'memberIds'])
       );
       allow delete: if isAdmin();
 

@@ -203,11 +203,26 @@ class TestService {
     });
   }
 
-  /// Stream of results for a specific test
+  /// Stream of results for a specific test (admin use — full collection query)
   Stream<List<TestResultModel>> testResultsStream(String testId) {
     return _db
         .collection('results')
         .where('testId', isEqualTo: testId)
+        .snapshots()
+        .map((snap) {
+      return snap.docs.map((d) => TestResultModel.fromSnapshot(d)).toList();
+    });
+  }
+
+  /// Stream of results for a specific test scoped to a teacher.
+  /// Queries by both testId AND teacherId so the Firestore rule
+  /// `resource.data.teacherId == request.auth.uid` is satisfied for list queries.
+  Stream<List<TestResultModel>> teacherTestResultsStream(
+      String testId, String teacherId) {
+    return _db
+        .collection('results')
+        .where('testId', isEqualTo: testId)
+        .where('teacherId', isEqualTo: teacherId)
         .snapshots()
         .map((snap) {
       return snap.docs.map((d) => TestResultModel.fromSnapshot(d)).toList();
