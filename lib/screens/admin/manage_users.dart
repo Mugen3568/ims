@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/class_model.dart';
+import '../../services/approval_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/class_service.dart';
 
@@ -30,11 +31,140 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     'owner',
   ];
 
-  // ── Verification toggle ───────────────────────────────────────────────────────
-  Future<void> _toggleVerification(String userId, bool current) async {
-    await FirebaseFirestore.instance.collection('users').doc(userId).update({
-      'isVerified': !current,
-    });
+  final ApprovalService _approvalService = ApprovalService();
+
+  // ── Approve user (full approval contract via ApprovalService) ─────────────────
+  Future<void> _approveUser({
+    required String userId,
+    required String targetRole,
+    required String targetName,
+  }) async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+
+    // Determine the current user's role from Firestore
+    String approverRole = 'owner';
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUid)
+          .get();
+      approverRole =
+          (snap.data()?['role'] ?? 'owner').toString().toLowerCase();
+    } catch (_) {}
+
+    try {
+      await _approvalService.approveUser(
+        targetUid: userId,
+        targetRole: targetRole,
+        approvedByUid: currentUid,
+        approvedByRole: approverRole,
+        targetName: targetName,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Approved $targetName as $targetRole.'),
+            backgroundColor: Colors.green[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to approve: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // ── Reject user (full rejection contract via ApprovalService) ─────────────────
+  Future<void> _rejectUser({
+    required String userId,
+    required String targetRole,
+    required String targetName,
+  }) async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+
+    final reasonCtrl = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Reject $targetName?',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: TextField(
+          controller: reasonCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Reason for rejection (optional)',
+            hintText: 'e.g. Unverified identity',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    String approverRole = 'owner';
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUid)
+          .get();
+      approverRole =
+          (snap.data()?['role'] ?? 'owner').toString().toLowerCase();
+    } catch (_) {}
+
+    try {
+      await _approvalService.rejectUser(
+        targetUid: userId,
+        targetRole: targetRole,
+        approvedByUid: currentUid,
+        approvedByRole: approverRole,
+        targetName: targetName,
+        reason: reasonCtrl.text.trim().isEmpty
+            ? null
+            : reasonCtrl.text.trim(),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Rejected $targetName.'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to reject: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   // ── Edit class/assignedClasses dialog ─────────────────────────────────────────
@@ -787,14 +917,19 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
             itemBuilder: (context, index) {
               final userData = users[index].data() as Map<String, dynamic>;
               final userId = users[index].id;
-              final name = userData['name'] ?? 'Unknown';
+              final name = (userData['name'] ?? 'Unknown').toString();
               final email = userData['email'] ?? '';
               final role =
                   (userData['role'] ?? 'student').toString().toLowerCase();
-              final isVerified = userData['isVerified'] ?? false;
+              final approvalStatus =
+                  (userData['approvalStatus'] ?? 'pending')
+                      .toString()
+                      .toLowerCase();
               final classId = userData['classId'] as String?;
               final assignedClasses = userData['assignedClasses'] as List?;
               final phone = userData['phone'] as String?;
+              final isPending = approvalStatus == 'pending';
+              final isApproved = approvalStatus == 'approved';
 
               // Skip current user from being shown
               final currentUid = FirebaseAuth.instance.currentUser?.uid;
@@ -853,18 +988,43 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                               ],
                             ),
                           ),
-                          // Verify toggle
-                          IconButton(
-                            icon: Icon(
-                              isVerified
-                                  ? Icons.verified_rounded
-                                  : Icons.pending_actions_rounded,
-                              color: isVerified ? Colors.green : Colors.orange,
+                          // Approval action — Approve/Reject for pending,
+                          // read-only status icon for approved/rejected.
+                          if (isPending) ...[
+                            IconButton(
+                              icon: const Icon(
+                                Icons.check_circle_rounded,
+                                color: Colors.green,
+                                size: 26,
+                              ),
+                              onPressed: () => _approveUser(
+                                userId: userId,
+                                targetRole: role,
+                                targetName: name,
+                              ),
+                              tooltip: 'Approve',
                             ),
-                            onPressed: () =>
-                                _toggleVerification(userId, isVerified),
-                            tooltip: isVerified ? 'Mark unverified' : 'Verify',
-                          ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.cancel_rounded,
+                                color: Colors.red,
+                                size: 26,
+                              ),
+                              onPressed: () => _rejectUser(
+                                userId: userId,
+                                targetRole: role,
+                                targetName: name,
+                              ),
+                              tooltip: 'Reject',
+                            ),
+                          ] else
+                            Icon(
+                              isApproved
+                                  ? Icons.verified_rounded
+                                  : Icons.block_rounded,
+                              color: isApproved ? Colors.green : Colors.red,
+                              size: 26,
+                            ),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -880,13 +1040,19 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                             _roleColor(role).withValues(alpha: 0.12),
                             _roleColor(role),
                           ),
-                          // Verification badge
+                          // Approval status badge
                           _badge(
-                            isVerified ? 'VERIFIED' : 'PENDING',
-                            isVerified
-                                ? Colors.green.withValues(alpha: 0.1)
-                                : Colors.orange.withValues(alpha: 0.1),
-                            isVerified ? Colors.green : Colors.orange,
+                            approvalStatus.toUpperCase(),
+                            isPending
+                                ? Colors.orange.withValues(alpha: 0.1)
+                                : isApproved
+                                    ? Colors.green.withValues(alpha: 0.1)
+                                    : Colors.red.withValues(alpha: 0.1),
+                            isPending
+                                ? Colors.orange
+                                : isApproved
+                                    ? Colors.green
+                                    : Colors.red,
                           ),
                           // Class info
                           if (classId != null && classId.isNotEmpty)
