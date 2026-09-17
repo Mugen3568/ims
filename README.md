@@ -1,171 +1,203 @@
-# 🎓 Institute Management System (IMS) - Complete Master Documentation
+🎓 Institute Management System (IMS) — Master Documentation
 
-**Version:** 2.1  
-**Framework:** Flutter (Material 3 Design System)  
-**Backend:** Firebase (Authentication & Firestore)  
-**Monitoring:** Sentry Error Tracking  
-**Target Package:** `com.ims.ims_app`  
-**Firebase Project:** `ims-app-8e988`  
-web-app-link= https://ims-app-8e988.web.app
----
+Version: 2.1
+Framework: Flutter (Material 3)
+Backend: Firebase Authentication & Firestore
+Monitoring: Sentry
+Package: com.ims.ims_app
+Web App: https://ims-app-8e988.web.app
 
-## 📋 Table of Contents
+1. System Overview
 
-1. [System Overview](#-system-overview)
-2. [Role & Permission Matrix](#-role--permission-matrix)
-3. [Core Feature Modules](#-core-feature-modules)
-   - [Authentication & Access Control](#1-authentication--access-control)
-   - [Lectures & Schedule Management](#2-lectures--schedule-management)
-   - [Attendance Tracking](#3-attendance-tracking)
-   - [Study Materials & Notes](#4-study-materials--notes)
-   - [Teacher Payroll & Financials](#5-teacher-payroll--financials)
-   - [Community & Messaging](#6-community--messaging)
-   - [Tests & Evaluation](#7-tests--evaluation)
-4. [Firestore Database Schema](#-firestore-database-schema)
-5. [Firestore Security Rules](#-firestore-security-rules)
-6. [Build, Deployment & Sentry Guide](#-build-deployment--sentry-guide)
-7. [Troubleshooting & Maintenance](#-troubleshooting--maintenance)
+IMS is a multi-role educational management platform for institutes, schools, and universities.
 
----
+Roles: Owner, Manager, Teacher, Student, Super Admin
 
-## 🚀 System Overview
+Owner: System administration, financial oversight, verification, payroll
+Manager: Administration, scheduling, attendance, moderation
+Teacher: Classes, attendance, materials, tests, payroll
+Student: Schedules, materials, attendance, tests, class chats
+Super Admin: Multi-institute management
+2. Role & Permission Matrix
+Feature	Owner	Manager	Teacher	Student	Super Admin
+User Management	✅	✅	❌	❌	✅
+Lecture Scheduling	✅	✅	❌	❌	❌
+Class Swaps	✅	✅	✅	❌	❌
+Student Attendance	✅	✅	✅	❌	❌
+Attendance Viewing	✅	✅	Own	Self	❌
+Study Materials	✅	✅	✅	Read	❌
+Teacher Payroll	✅	✅	Own	❌	❌
+Class / Direct Messaging	✅	✅	✅	✅	❌
+Tests & Grading	✅	✅	✅	❌	❌
+Test Results	✅	✅	✅	Self	❌
+3. Core Features
+Authentication & Access
+Firebase Email/Password authentication
+Role-based user profiles in /users/{userId}
+New accounts default to isVerified: false, except students
+Admin verification controls operational access
+Lecture & Schedule Management
+Teacher and class dropdowns loaded from Firestore
+Subject auto-fill
+Date/time pickers
+Optional room assignment
+Teacher class-swap request and approval workflow
+Attendance
+Teachers mark students present/absent
+Attendance stored in Firestore
+Teacher lecture counters update automatically
+Real-time attendance dashboards for teachers and students
+Study Materials
+Central study_materials collection
+Supports Drive, YouTube, OneDrive, Dropbox and external links
+Owners, Managers and Teachers can upload materials
+Provider-specific material indicators
+Teacher Payroll
+Per-lecture rate configuration
+Automatic lecture and unpaid-lecture tracking
+Owner-controlled payout processing
+Payout records stored in /payouts
+Teacher payroll dashboard
+Messaging
+Class group chats
+One-to-one messaging
+In-app alerts and notifications
+Tests & Evaluation
+Staff can create tests
+Test results and grades stored in Firestore
+4. Firestore Schema
+users/{userId}
+name
+email
+role
+isVerified
+rate_per_lecture
+total_lectures_taken
+unpaid_lectures
+lectures/{lectureId}
+subject
+classId
+className
+teacherId
+teacher_uid
+teacher_name
+date
+startTime
+endTime
+time
+room
+status
+needs_approval
+classes/{classId}
+className
+subject
+teacherId
+teacherName
+joinCode
+isActive
+memberCount
+study_materials/{materialId}
+title
+description
+link
+url
+classId
+className
+subject
+type
+uploadedBy
+uploadedByRole
+teacherId
+createdAt
+student_attendance/{attendanceId}
+studentId
+lectureId
+classId
+teacherId
+subject
+date
+status
+submittedAt
+teacher_attendance/{attendanceId}
+teacherId
+lectureId
+classId
+subject
+date
+status
+submittedAt
+payroll/{teacherId}
+teacherId
+perLecture
+completedLectures
+unpaidLectures
+pendingSalary
+updatedAt
+payouts/{payoutId}
+teacher_id
+teacher_name
+unpaid_lectures
+rate_per_lecture
+total_pay
+payment_mode
+date
+5. Firestore Security
 
-The **Institute Management System (IMS)** is a multi-role educational management platform designed for schools, coaching institutes, and universities. It unifies operations across six distinct user roles:
+Deploy with:
 
-- **Owner**: Full system administration, financial oversight, user verification, and payroll management.
-- **Manager**: Administrative management, lecture scheduling, attendance oversight, and community moderation.
-- **Teacher**: Class management, attendance recording, study material uploads, test creation, and payroll tracking.
-- **Student**: View class schedules, access study materials, track personal attendance, take tests, and participate in class chats.
-- **Parent**: Monitor student attendance, track academic progress, view fee statements, and communicate with staff.
-- **Super Admin**: Enterprise multi-tenant institute management.
-
----
-
-## 🛡️ Role & Permission Matrix
-
-| Feature Module | Owner | Manager | Teacher | Student | Parent | Super Admin |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **User Verification & Management** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| **Schedule / Create Lectures** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Request / Volunteer Class Swaps** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **Record Student Attendance** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **View Student Attendance** | ✅ | ✅ | ✅ (Own) | ✅ (Self) | ✅ (Child) | ❌ |
-| **Upload Study Materials / Links** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **Read Study Materials** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **Teacher Payroll Oversight** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Personal Payroll Dashboard** | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| **Class Chats & Direct Messaging** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **Create & Grade Tests** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **View Test Results** | ✅ | ✅ | ✅ | ✅ (Self) | ✅ (Child) | ❌ |
-
----
-
-## 📦 Core Feature Modules
-
-### 1. Authentication & Access Control
-- **Email & Password Authentication** via Firebase Auth.
-- **Multi-Role User Profile Creation** saved in `/users/{userId}`.
-- **Account Verification Safeguard**: New registrations default to `isVerified: false` (except students). Admins verify users in Firestore to grant operational access.
-
-### 2. Lectures & Schedule Management
-- **Automated Teacher Dropdown**: Loads active teachers directly from Firestore (`users` where `role == 'teacher'`). Automatically binds `teacher_uid` and `teacher_name`.
-- **Class Dropdown & Subject Auto-Fill**: Select active classes from the `classes` collection.
-- **Interactive Date & Time Pickers**: Native date/time picker dialogs formatting clean ranges (e.g. `10:00 AM - 11:00 AM`).
-- **Room Assignment**: Optional room/location field for lectures.
-- **Lecture Swap Workflow**: Teachers can request class swaps; fellow teachers can volunteer; managers/owners approve swaps.
-
-### 3. Attendance Tracking
-- **Lecture Attendance Submission**: Teachers select present/absent statuses for students.
-- **Automated Teacher Payroll Counter**: Submitting attendance increments `total_lectures_taken` and `unpaid_lectures` for the teacher and updates `/payroll/{teacherId}`.
-- **Multi-Role Attendance Dashboards**: Real-time status cards for teachers, students, and parents.
-
-### 4. Study Materials & Notes
-- **Unified `study_materials` Firestore Collection**: Supports Google Drive, YouTube, OneDrive, Dropbox, and external cloud storage links.
-- **Multi-Role Upload Rights**: Owners, Managers, and Teachers can post resources for specific classes or subjects.
-- **Smart Material Icons**: Detects link provider (YouTube, Drive, Dropbox, PDF) and renders custom badges.
-
-### 5. Teacher Payroll & Financials
-- **Per-Lecture Rate Configuration**: Owners configure per-lecture rates (`rate_per_lecture`).
-- **Payout Processing**: Owners process payouts clearing unpaid lecture counts and generating financial receipts in `/payouts`.
-- **Personal Payroll Screen**: Teachers view total lectures conducted, unpaid lectures, per-lecture rate, and total pending payout.
-
-### 6. Community & Messaging
-- **Class Group Chats**: Messaging under `/classes/{classId}/messages`.
-- **Direct Messages**: Real-time 1-on-1 conversations under `/conversations/{conversationId}`.
-- **In-App Notification Banners**: Floating notifications for alerts under `/alerts`.
-
-### 7. Tests & Evaluation
-- **Test Creation**: Staff can create test schedules under `/tests`.
-- **Grading & Results**: Grade recording stored under `/tests/{testId}/results`.
-
----
-
-## 🗄️ Firestore Database Schema
-
-### Key Collections:
-- **`users/{userId}`**:
-  `{ name, email, role, isVerified, rate_per_lecture, total_lectures_taken, unpaid_lectures, linkedStudentId }`
-- **`lectures/{lectureId}`**:
-  `{ subject, classId, className, teacherId, teacher_uid, teacher, teacher_name, date, startTime, endTime, time, room, status, needs_approval }`
-- **`classes/{classId}`**:
-  `{ className, subject, teacherId, teacherName, joinCode, isActive, memberCount }`
-- **`study_materials/{materialId}`**:
-  `{ title, description, link, url, classId, className, subject, type, uploadedBy, uploadedByRole, teacherId, createdAt }`
-- **`student_attendance/{attendanceId}`**:
-  `{ studentId, lectureId, classId, teacherId, subject, date, status, submittedAt }`
-- **`teacher_attendance/{attendanceId}`**:
-  `{ teacherId, lectureId, classId, subject, date, status, submittedAt }`
-- **`payroll/{teacherId}`**:
-  `{ teacherId, perLecture, completedLectures, unpaidLectures, pendingSalary, updatedAt }`
-- **`payouts/{payoutId}`**:
-  `{ teacher_id, teacher_name, unpaid_lectures, rate_per_lecture, total_pay, payment_mode, date }`
-
----
-
-## 🔒 Firestore Security Rules
-
-Deploy rules to Firebase using:
-```bash
 firebase deploy --only firestore:rules
-```
 
-Key rule highlights:
-- **Users**: Users update their own non-protected profile fields & lecture counters (`total_lectures_taken`, `unpaid_lectures`). Managers/Owners have write access.
-- **Lectures**: Read for signed-in users. Create/Update for teachers, managers, and owners.
-- **Study Materials**: Read for signed-in users. Create/Update/Delete for teachers, managers, and owners.
-- **Attendance**: Teachers create/update student & teacher attendance for their lectures. Owners/Managers have full read/write access.
+Rules overview:
 
----
+Users can update permitted profile information
+Owners/Managers have administrative write access
+Signed-in users can read lectures and study materials
+Teachers, Managers and Owners can manage lectures/materials
+Teachers manage attendance for their lectures
+Owners/Managers have broader attendance access
+6. Build & Deployment
 
-## 🛠️ Build, Deployment & Sentry Guide
+Requirements
 
-### Prerequisites
-- Flutter SDK (v3.22+)
-- Firebase CLI & Configured Google Services (`google-services.json`, `firebase_options.dart`)
+Flutter 3.22+
+Firebase CLI
+google-services.json
+firebase_options.dart
 
-### Building Release APK
-Run the build command from project root (`d:\IMS`):
-```powershell
+Release APK
+
 flutter clean
 flutter pub get
 flutter build apk --release
-```
-- **Output Location**: `d:\IMS\build\app\outputs\flutter-apk\app-release.apk`
 
-### Sentry Production Monitoring
-- Integrated via `sentry_flutter` in `lib/main.dart`.
-- Upload debug symbols after release build:
-  ```powershell
-  flutter pub run sentry_dart_plugin
-  ```
+Output
 
----
+build/app/outputs/flutter-apk/app-release.apk
 
-## 🔧 Troubleshooting & Maintenance
+Sentry
 
-1. **Permission Denied on Attendance Submission**:
-   - Ensure `firestore.rules` is deployed so teachers can update `total_lectures_taken` and `unpaid_lectures` on `/users/{userId}`.
-2. **Missing Teacher Name on Cards**:
-   - Check that `teacher_name` or `teacher` field is passed during lecture creation.
-3. **Theme Preference Reset**:
-   - Theme settings persist in `shared_preferences`. Clean app data will reset to default Light mode.
+flutter pub run sentry_dart_plugin
+
+Integrated using sentry_flutter.
+
+7. Maintenance
+
+Attendance permission errors: Verify Firestore rules are deployed.
+
+Missing teacher names: Ensure teacher_name / teacher is stored during lecture creation.
+
+Theme reset: Theme preferences use shared_preferences; clearing app data resets the theme.
+
+Changes made
+
+The Parent role and all parent-specific functionality have been completely removed, including:
+
+Parent role
+Parent permissions
+Parent attendance access
+Parent test-result access
+Parent material access references
+linkedStudentId from the user schema
+Parent mentions in dashboards and feature descriptions
+
+I also compressed the wording and schema so this reads more like technical project documentation rather than a large product specification, while keeping the important implementation details.
